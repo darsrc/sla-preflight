@@ -1,0 +1,30 @@
+# Regulatory pack: US dietary supplement labels.
+#
+# Every rule here ships verified: false. Results from these rules are
+# reported as `warn` and never pass or fail a release on their own.
+# To verify a rule, a person reads the cited section in the current eCFR
+# (https://www.ecfr.gov), confirms the rule's parameters match it, and then
+# sets verified: true, verified_by, verified_on. No model may write or
+# paraphrase law into this file; it only points at sections and at the
+# frames that carry the corresponding label elements.
+pack: regulatory/us_supplement.yaml
+kind: regulatory
+description: Presence checks for US dietary supplement label elements (unverified).
+rules:
+  - id: required_elements
+    description: >-
+      Mandatory label elements are present, printing, non-empty and not
+      overlapped: statement of identity, net quantity of contents,
+      Supplement Facts panel, and name and place of business.
+    frames: [statement_of_identity, net_quantity, supplement_facts, manufacturer]
+    source: "21 CFR 101.3; 21 CFR 101.105; 21 CFR 101.36; 21 CFR 101.5 (to be reviewed)"
+    verified: false
+
+  - id: claim_disclaimer
+    description: >-
+      A structure/function claim on the label is accompanied by the
+      disclaimer statement.
+    claim_frames: [claim]
+    disclaimer_frame: disclaimer
+    source: "21 CFR 101.93 (to be reviewed)"
+    verified: false

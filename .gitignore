@@ -1,0 +1,13 @@
+__pycache__/
+*.egg-info/
+.pytest_cache/
+out/
+build/
+dist/
+.venv/
+# client material never enters this repo
+private/
+clients/
+
+# build spec stays local, out of the public repo
+preflight-spec.md

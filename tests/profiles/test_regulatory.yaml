@@ -1,0 +1,7 @@
+name: test_regulatory
+description: Only the shipped (unverified) regulatory pack.
+packs:
+  - regulatory/us_supplement.yaml
+checks:
+  - required_elements
+  - claim_disclaimer_pairing

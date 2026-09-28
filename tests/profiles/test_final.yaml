@@ -1,0 +1,19 @@
+name: test_final
+description: Every v0.1 check against the verified test packs.
+packs:
+  - printer/test_printer.yaml
+  - brand/example_brand.yaml
+checks:
+  - page_matches_die
+  - trim_safety
+  - bleed_coverage
+  - frame_overflow
+  - frame_overlap
+  - min_type_size
+  - pdf_page_box
+  - pdf_fonts_outlined
+  - pdf_color_space
+  - required_elements
+  - facts_math
+  - claim_disclaimer_pairing
+  - render_regression

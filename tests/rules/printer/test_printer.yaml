@@ -1,0 +1,34 @@
+# Test-only printer pack (synthetic die), all rules verified so checks
+# return real pass/fail against the fixtures.
+pack: printer/test_printer.yaml
+kind: printer
+description: Synthetic printer for tests.
+rules:
+  - id: safe_margin
+    description: All non-bleed content at least this far inside trim.
+    min_gap_in: 0.0625
+    bleed_allowed: [bg_band, bar_top, bar_bottom, lot_box]
+    source: "Test fixture spec"
+    verified: true
+    verified_by: tests
+    verified_on: 2026-09-28
+  - id: die
+    description: Page size equals the die.
+    width_in: 4.0
+    height_in: 2.5
+    bleed_in: 0.125
+    tolerance_in: 0.001
+    source: "Test fixture spec"
+    verified: true
+    verified_by: tests
+    verified_on: 2026-09-28
+  - id: pdf_export
+    description: Final PDF has bleed, outlined fonts, CMYK only.
+    bleed_in: 0.125
+    tolerance_in: 0.001
+    fonts_outlined: true
+    color_space: CMYK
+    source: "Test fixture spec"
+    verified: true
+    verified_by: tests
+    verified_on: 2026-09-28

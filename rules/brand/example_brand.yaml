@@ -1,0 +1,70 @@
+# Brand pack: a public example with dummy frame names and values.
+# Real client brand packs live outside this repo; pass one at run time with
+# --brand-pack /path/to/pack.yaml (it replaces this pack).
+pack: brand/example_brand.yaml
+kind: brand
+description: Example brand/layout rules for a supplement bottle label.
+rules:
+  - id: required_elements
+    description: Frames this layout must always print.
+    frames: [product_name, count, serving_info, supplement_facts, manufacturer, lot_box]
+    source: "Example brand layout spec (synthetic)"
+    verified: true
+    verified_by: example
+    verified_on: 2026-09-28
+
+  - id: no_frame_overlap
+    description: Text frames never overlap each other or a required frame.
+    containers:            # [outer, inner] pairs that may overlap by design
+      - [lot_box, lot_text]
+      - [facts_box, supplement_facts]
+    source: "Example brand layout spec (synthetic)"
+    verified: true
+    verified_by: example
+    verified_on: 2026-09-28
+
+  - id: no_text_overflow
+    description: No text frame overflows.
+    source: "Example brand layout spec (synthetic)"
+    verified: true
+    verified_by: example
+    verified_on: 2026-09-28
+
+  - id: min_type_size
+    description: No text smaller than this.
+    min_pt: 6.0
+    source: "Example brand layout spec (synthetic)"
+    verified: true
+    verified_by: example
+    verified_on: 2026-09-28
+
+  - id: facts_math
+    description: Servings per container equals unit count divided by serving size.
+    count_frame: count
+    serving_frame: serving_info
+    count_pattern: '(?i)(\d[\d,]*)\s*(?:capsules|caps|tablets|softgels|gummies)'
+    serving_size_pattern: '(?i)serving\s+size\s*:?\s*(\d+)'
+    servings_pattern: '(?i)servings\s+per\s+container\s*:?\s*(\d+)'
+    source: "Arithmetic: servings per container = count / serving size"
+    verified: true
+    verified_by: example
+    verified_on: 2026-09-28
+
+  - id: claim_disclaimer
+    description: Any claim text requires the disclaimer frame to be filled.
+    claim_frames: [claim]
+    disclaimer_frame: disclaimer
+    source: "Example brand layout spec (synthetic)"
+    verified: true
+    verified_by: example
+    verified_on: 2026-09-28
+
+  - id: render_regression
+    description: Changed area against the approved render stays under this fraction.
+    dpi: 150
+    pixel_threshold: 24        # per-channel difference that counts as a change
+    max_changed_fraction: 0.0  # any change fails; set higher to tolerate noise
+    source: "Example brand layout spec (synthetic)"
+    verified: true
+    verified_by: example
+    verified_on: 2026-09-28

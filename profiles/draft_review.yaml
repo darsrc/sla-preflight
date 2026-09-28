@@ -1,0 +1,15 @@
+name: draft_review
+description: Fast layout and content review of a draft .sla (no PDF, no Scribus).
+packs:
+  - printer/wizard_labels.yaml
+  - regulatory/us_supplement.yaml
+  - brand/example_brand.yaml
+checks:
+  - page_matches_die
+  - trim_safety
+  - bleed_coverage
+  - frame_overlap
+  - min_type_size
+  - required_elements
+  - facts_math
+  - claim_disclaimer_pairing

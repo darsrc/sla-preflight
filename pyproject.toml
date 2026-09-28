@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sla-preflight"
+version = "0.1.0"
+description = "Modular verification toolkit for Scribus print labels"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "PyYAML>=6",
+  "pikepdf>=8",
+  "Pillow>=10",
+  "mcp>=1.9,<2",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+sla-preflight = "sla_preflight.cli:main"
+sla-preflight-mcp = "sla_preflight.mcp_server:main"
+
+[tool.setuptools.packages.find]
+include = ["sla_preflight*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,34 @@
+# Printer pack: Wizard Labels (public example).
+# Only safe_margin is confirmed. The other rules hold placeholder values and
+# stay verified: false (results are advisory `warn`) until someone confirms
+# them against the printer's own artwork spec.
+pack: printer/wizard_labels.yaml
+kind: printer
+description: Artwork requirements for Wizard Labels roll labels.
+rules:
+  - id: safe_margin
+    description: All non-bleed content at least this far inside trim.
+    min_gap_in: 0.0625
+    bleed_allowed: [bg_band, bar_top, bar_bottom, lot_box]
+    source: "Wizard Labels prepress email, 2026-06-04"
+    verified: true
+    verified_by: Darius
+    verified_on: 2026-09-28
+
+  - id: die
+    description: Page size equals the die; bleed set in document bleed settings.
+    width_in: 3.0      # PLACEHOLDER - replace with the die for the job
+    height_in: 2.0     # PLACEHOLDER
+    bleed_in: 0.125    # PLACEHOLDER
+    tolerance_in: 0.001
+    source: "PLACEHOLDER - confirm against the printer's die line for the job"
+    verified: false
+
+  - id: pdf_export
+    description: Final PDF has bleed, outlined fonts, and CMYK-only colour.
+    bleed_in: 0.125        # PLACEHOLDER
+    tolerance_in: 0.001
+    fonts_outlined: true   # PLACEHOLDER
+    color_space: CMYK      # PLACEHOLDER
+    source: "PLACEHOLDER - confirm against the printer's PDF export requirements"
+    verified: false

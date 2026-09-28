@@ -1,0 +1,20 @@
+name: print_label_final
+description: Release gate for a final print label (.sla plus exported PDF).
+packs:
+  - printer/wizard_labels.yaml
+  - regulatory/us_supplement.yaml
+  - brand/example_brand.yaml
+checks:
+  - page_matches_die
+  - trim_safety
+  - bleed_coverage
+  - frame_overflow
+  - frame_overlap
+  - min_type_size
+  - pdf_page_box
+  - pdf_fonts_outlined
+  - pdf_color_space
+  - required_elements
+  - facts_math
+  - claim_disclaimer_pairing
+  - render_regression

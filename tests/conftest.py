@@ -29,3 +29,31 @@ def approved_render(fx, tmp_path_factory):
 
     out = tmp_path_factory.mktemp("approved") / "good.png"
     return render_png(fx["sla"]["good"], out, dpi=150)
+
+
+# Scribus PDF export settings: fontEmbedding 0 = embed, 1 = outline;
+# outdst 0 = screen (RGB), 1 = printer (CMYK). Set every option explicitly:
+# PDFfile() starts from the settings of the previous export.
+SCRIBUS_EXPORTS = {
+    "print_ready": dict(useDocBleeds=True, outdst=1, fontEmbedding=1),
+    "no_bleed": dict(useDocBleeds=False, bleedt=0.0, bleedb=0.0, bleedl=0.0, bleedr=0.0,
+                     outdst=1, fontEmbedding=1),
+    "embedded_rgb": dict(useDocBleeds=True, outdst=0, fontEmbedding=0),
+}
+
+
+@pytest.fixture(scope="session")
+def scribus_pdfs(fx, tmp_path_factory):
+    """The clean label exported by real Scribus with different settings."""
+    from sla_preflight.scribus import run_script
+
+    out = tmp_path_factory.mktemp("scribus_pdf")
+    lines = [f"scribus.openDoc({str(fx['sla']['good'])!r})"]
+    for name, opts in SCRIBUS_EXPORTS.items():
+        lines.append("p = scribus.PDFfile()")
+        lines.append(f"p.file = {str(out / (name + '.pdf'))!r}")
+        lines += [f"p.{k} = {v!r}" for k, v in opts.items()]
+        lines.append("p.save()")
+    lines.append("scribus.closeDoc()")
+    run_script("\n".join(lines))
+    return {name: out / f"{name}.pdf" for name in SCRIBUS_EXPORTS}

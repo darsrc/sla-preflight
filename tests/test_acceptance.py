@@ -51,3 +51,23 @@ def test_regulatory_results_are_warn_with_source(fx, tmp_path):
             for f in res["findings"]:
                 assert f["rule"].startswith("regulatory/us_supplement.yaml#")
                 assert "CFR" in f["rule_source"] and f["rule_verified"] is False
+
+
+def test_three_defects_fail_with_the_shipped_profile(fx, tmp_path):
+    """Criterion 2 with the real print_label_final profile and shipped packs."""
+    cases = [
+        ("facts_60_servings", None, "facts_math", "serving_info", "brand/example_brand.yaml#facts_math"),
+        ("good", "no_bleed", "pdf_page_box", "page 1", "printer/wizard_labels.yaml#pdf_bleed"),
+        ("facts_7_rows_overlap", None, "required_elements", "manufacturer",
+         "brand/example_brand.yaml#required_elements"),
+        ("facts_7_rows_overlap", None, "frame_overlap", "manufacturer",
+         "brand/example_brand.yaml#no_frame_overlap"),
+    ]
+    for sla, pdf, check, obj, rule in cases:
+        rep = run_checks(fx["sla"][sla], "print_label_final",
+                         pdf_path=fx["pdf"][pdf] if pdf else None, out_dir=tmp_path, only=[check])
+        assert rep["status"] == "fail", (sla, rep)
+        res = failing(rep, check)
+        assert res["status"] == "fail", (sla, res)
+        assert obj in objects(res), (sla, res)
+        assert any(f["rule"] == rule for f in res["findings"]), (sla, res)

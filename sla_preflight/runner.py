@@ -11,6 +11,8 @@ from .context import Context
 from .profiles import load_packs, load_profile
 from .result import CheckResult, error_result, overall_status, skipped_result
 from .rules import RulePackError
+from .checks._common import CheckInputError
+from .scribus import ScribusError
 from .sla import SlaError
 
 
@@ -30,7 +32,7 @@ def run_one(spec: registry.CheckSpec, ctx: Context) -> CheckResult:
         return spec.func(ctx)
     except NotImplementedError:
         return error_result(spec.name, spec.kind, f"{spec.name} is not implemented yet.")
-    except (SlaError, RulePackError, FileNotFoundError) as e:
+    except (SlaError, RulePackError, FileNotFoundError, CheckInputError, ScribusError) as e:
         return error_result(spec.name, spec.kind, f"Could not run: {e}")
     except Exception as e:  # a crash is an error, never a pass
         tb = traceback.format_exception_only(type(e), e)[-1].strip()

@@ -3,7 +3,15 @@ from __future__ import annotations
 
 from ..context import Context
 from ..registry import check
-from ..result import CheckResult
+from ..result import CheckResult, Finding, finalize
+from ..scribus import text_overflows
+from ..sla import pt_to_in
+from ._common import (
+    EPS_PT, box_in, page_label, printing_leaves, names_with_ancestry, overlap_pairs, r6,
+    schematic_crop,
+)
+
+SIDES = ("left", "top", "right", "bottom")
 
 
 @check(
@@ -23,7 +31,41 @@ from ..result import CheckResult
     ),
 )
 def page_matches_die(ctx: Context) -> CheckResult:
-    raise NotImplementedError
+    doc = ctx.doc
+    rules = ctx.rules.all("die")
+    findings: list[Finding] = []
+    for rule in rules:
+        w, h = rule["width_in"], rule["height_in"]
+        bleed = rule.get("bleed_in")
+        tol = rule.get("tolerance_in", 0.001)
+        for pg in doc.pages:
+            pw, ph = pt_to_in(pg.width), pt_to_in(pg.height)
+            if abs(pw - w) > tol or abs(ph - h) > tol:
+                baked = bleed is not None and abs(pw - (w + 2 * bleed)) <= tol and abs(ph - (h + 2 * bleed)) <= tol
+                findings.append(Finding.from_rule(
+                    rule, page_label(pg.index),
+                    measured={"width_in": r6(pw), "height_in": r6(ph)},
+                    threshold={"width_in": w, "height_in": h, "tolerance_in": tol},
+                    message=("Bleed is baked into the page size; set the page to the die "
+                             "and put the bleed in Document Setup > Bleeds."
+                             if baked else "Page size differs from the die."),
+                ))
+        if bleed is not None:
+            sides = {k: r6(pt_to_in(v)) for k, v in doc.bleed.items()}
+            wrong = {k: v for k, v in sides.items() if abs(v - bleed) > tol}
+            if wrong:
+                findings.append(Finding.from_rule(
+                    rule, "document bleed",
+                    measured={f"bleed_{k}_in": v for k, v in sides.items()},
+                    threshold={"bleed_in": bleed, "tolerance_in": tol},
+                    message="Document bleed settings differ from the printer's bleed.",
+                ))
+    n = len(findings)
+    return finalize(
+        "page_matches_die", "deterministic", findings, rules,
+        "Page size matches the die and document bleed is set.",
+        f"Page size or bleed does not match the die ({n} problem{'s' * (n != 1)}).",
+    )
 
 
 @check(
@@ -40,7 +82,37 @@ def page_matches_die(ctx: Context) -> CheckResult:
     fix="Move or shrink the named object so every side is at least min_gap_in inside trim, or, if it is meant to bleed, add it to bleed_allowed in the pack.",
 )
 def trim_safety(ctx: Context) -> CheckResult:
-    raise NotImplementedError
+    doc = ctx.doc
+    rules = ctx.rules.all("safe_margin")
+    findings: list[Finding] = []
+    for rule in rules:
+        min_gap = rule["min_gap_in"]
+        allowed = set(rule.get("bleed_allowed", []) or [])
+        for f in printing_leaves(doc):
+            if names_with_ancestry(f, doc) & allowed:
+                continue
+            pg = doc.pages[f.page]
+            x0, y0, x1, y1 = f.ink_bbox()
+            gaps = {"left": x0, "top": y0, "right": pg.width - x1, "bottom": pg.height - y1}
+            short = {k: v for k, v in gaps.items() if pt_to_in(v) < min_gap - EPS_PT}
+            if not short:
+                continue
+            finding = Finding.from_rule(
+                rule, f.name or f"unnamed {f.kind}",
+                measured={f"gap_{k}_in": r6(pt_to_in(v)) for k, v in short.items()},
+                threshold={"min_gap_in": min_gap},
+                message=f"{f.name!r} is closer than {min_gap} in to trim on the "
+                        + ", ".join(short) + " side" + ("s" if len(short) > 1 else "") + ".",
+            )
+            finding.evidence["crop"] = schematic_crop(
+                ctx, "trim_safety", f.name or "object", [f], safe_in=min_gap)
+            findings.append(finding)
+    names = sorted({f.object for f in findings})
+    return finalize(
+        "trim_safety", "deterministic", findings, rules,
+        "All non-bleed objects sit inside the safe margin.",
+        f"{len(names)} object(s) too close to trim: {', '.join(names)}.",
+    )
 
 
 @check(
@@ -56,7 +128,44 @@ def trim_safety(ctx: Context) -> CheckResult:
     fix="Extend the named object past trim to the bleed edge on the reported side.",
 )
 def bleed_coverage(ctx: Context) -> CheckResult:
-    raise NotImplementedError
+    doc = ctx.doc
+    rules = ctx.rules.all("safe_margin")
+    findings: list[Finding] = []
+    for rule in rules:
+        allowed = set(rule.get("bleed_allowed", []) or [])
+        tol = rule.get("touch_tolerance_in", 0.001) * 72
+        for f in printing_leaves(doc):
+            if not (names_with_ancestry(f, doc) & allowed):
+                continue
+            pg = doc.pages[f.page]
+            b = doc.bleed
+            x0, y0, x1, y1 = f.bbox()
+            # how far past trim the object reaches on each side it touches
+            reach = {
+                "left": (x0 <= tol, -x0, b["left"]),
+                "top": (y0 <= tol, -y0, b["top"]),
+                "right": (x1 >= pg.width - tol, x1 - pg.width, b["right"]),
+                "bottom": (y1 >= pg.height - tol, y1 - pg.height, b["bottom"]),
+            }
+            short = {k: (past, need) for k, (touch, past, need) in reach.items()
+                     if touch and past < need - tol}
+            if not short:
+                continue
+            finding = Finding.from_rule(
+                rule, f.name,
+                measured={f"past_trim_{k}_in": r6(pt_to_in(p)) for k, (p, _) in short.items()},
+                threshold={f"bleed_{k}_in": r6(pt_to_in(n)) for k, (_, n) in short.items()},
+                message=f"{f.name!r} touches trim but stops short of the bleed edge on the "
+                        + ", ".join(short) + " side" + ("s" if len(short) > 1 else "") + ".",
+            )
+            finding.evidence["crop"] = schematic_crop(ctx, "bleed_coverage", f.name, [f])
+            findings.append(finding)
+    names = sorted({f.object for f in findings})
+    return finalize(
+        "bleed_coverage", "deterministic", findings, rules,
+        "Every bleed object that touches trim runs to the bleed edge.",
+        f"{len(names)} bleed object(s) stop short of the bleed edge: {', '.join(names)}.",
+    )
 
 
 @check(
@@ -71,7 +180,27 @@ def bleed_coverage(ctx: Context) -> CheckResult:
     fix="Enlarge the named frame, shorten the text, or link it to a continuation frame.",
 )
 def frame_overflow(ctx: Context) -> CheckResult:
-    raise NotImplementedError
+    doc = ctx.doc
+    rules = ctx.rules.all("no_text_overflow")
+    over = text_overflows(ctx.sla_path, fonts_dir=ctx.options.get("fonts_dir"))
+    printing = {f.name: f for f in printing_leaves(doc) if f.is_text and f.name}
+    findings: list[Finding] = []
+    for rule in rules:
+        for name, flag in sorted(over.items()):
+            if not flag or name not in printing:
+                continue
+            finding = Finding.from_rule(
+                rule, name, measured={"overflows": True}, threshold={"overflows": False},
+                message=f"Text in {name!r} does not fit its frame; the rest will not print.",
+            )
+            finding.evidence["crop"] = schematic_crop(ctx, "frame_overflow", name, [printing[name]])
+            findings.append(finding)
+    names = sorted({f.object for f in findings})
+    return finalize(
+        "frame_overflow", "deterministic", findings, rules,
+        f"No text frame overflows ({len(over)} checked in Scribus).",
+        f"{len(names)} text frame(s) overflow: {', '.join(names)}.",
+    )
 
 
 @check(
@@ -89,7 +218,28 @@ def frame_overflow(ctx: Context) -> CheckResult:
     fix="Move or resize one frame of the reported pair so they no longer overlap, or declare the pair a container if the overlap is intended.",
 )
 def frame_overlap(ctx: Context) -> CheckResult:
-    raise NotImplementedError
+    rules = ctx.rules.all("no_frame_overlap")
+    rule = rules[0]  # containers/ignore from all packs are merged in overlap_pairs
+    findings: list[Finding] = []
+    for p in overlap_pairs(ctx):
+        top, under, box = p["top"], p["under"], p["box"]
+        w, h = pt_to_in(box[2] - box[0]), pt_to_in(box[3] - box[1])
+        finding = Finding.from_rule(
+            rule, top.name,
+            measured={"other": under.name, "overlap_in": [r6(w), r6(h)],
+                      "overlap_box_in": box_in(box)},
+            threshold={"max_overlap_in": 0},
+            message=f"{top.name!r} overlaps {under.name!r} by {w:.3f} x {h:.3f} in.",
+        )
+        finding.evidence["crop"] = schematic_crop(
+            ctx, "frame_overlap", f"{top.name}__{under.name}", [top], [under], region=box)
+        findings.append(finding)
+    pairs = [f"{f.object}/{f.measured['other']}" for f in findings]
+    return finalize(
+        "frame_overlap", "deterministic", findings, rules,
+        "No text frame overlaps another text frame or a required frame.",
+        f"{len(pairs)} overlapping pair(s): {', '.join(pairs)}.",
+    )
 
 
 @check(
@@ -105,4 +255,28 @@ def frame_overlap(ctx: Context) -> CheckResult:
     fix="Raise the reported runs to at least min_pt, making room by resizing the frame or trimming text.",
 )
 def min_type_size(ctx: Context) -> CheckResult:
-    raise NotImplementedError
+    doc = ctx.doc
+    rules = ctx.rules.all("min_type_size")
+    findings: list[Finding] = []
+    for rule in rules:
+        min_pt = rule["min_pt"]
+        scope = set(rule.get("frames") or [])
+        for f in printing_leaves(doc):
+            if not f.is_text or (scope and f.name not in scope):
+                continue
+            for i, run in enumerate(f.runs):
+                if not run.text.strip() or run.size_pt >= min_pt - 1e-9:
+                    continue
+                findings.append(Finding.from_rule(
+                    rule, f.name,
+                    measured={"size_pt": run.size_pt, "run": i, "text": run.text[:40],
+                              "font": run.font},
+                    threshold={"min_pt": min_pt},
+                    message=f"{run.size_pt:g} pt text in {f.name!r} is under {min_pt:g} pt.",
+                ))
+    names = sorted({f.object for f in findings})
+    return finalize(
+        "min_type_size", "deterministic", findings, rules,
+        "No text is below the minimum type size.",
+        f"{len(findings)} text run(s) below the minimum size in: {', '.join(names)}.",
+    )

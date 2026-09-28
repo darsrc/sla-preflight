@@ -77,8 +77,10 @@ def assert_result(res, status, objects, rule):
         assert objects <= named(res), (objects, res["findings"])
         failing = [f for f in res["findings"] if f.get("object") in objects or
                    f.get("measured", {}).get("other") in objects]
-        assert all(f["rule"] == rule and f["rule_source"] and f["rule_verified"] is True
-                   for f in failing), failing
+        # a frame may be required by more than one pack; the expected rule
+        # must be among those cited, and every citation must be complete
+        assert any(f["rule"] == rule for f in failing), failing
+        assert all(f["rule_source"] and f["rule_verified"] is True for f in failing), failing
         assert all("measured" in f and "threshold" in f for f in failing), failing
 
 
@@ -135,3 +137,16 @@ def test_render_regression(fx, tmp_path, approved_render, sla, status, objects):
     assert_result(res, status, objects, f"{BRAND}#render_regression")
     if status == "fail":
         assert any(f.get("evidence", {}).get("crop") for f in res["findings"])
+
+
+@requires_scribus
+@pytest.mark.parametrize("export,expected", [
+    ("print_ready", {"pdf_page_box": "pass", "pdf_fonts_outlined": "pass", "pdf_color_space": "pass"}),
+    ("no_bleed", {"pdf_page_box": "fail", "pdf_fonts_outlined": "pass", "pdf_color_space": "pass"}),
+    ("embedded_rgb", {"pdf_fonts_outlined": "fail", "pdf_color_space": "fail"}),
+])
+def test_pdf_checks_on_real_scribus_exports(fx, scribus_pdfs, tmp_path, export, expected):
+    rep = run_checks(fx["sla"]["good"], "test_final", pdf_path=scribus_pdfs[export],
+                     out_dir=tmp_path, only=list(expected))
+    got = {r["check"]: r["status"] for r in rep["results"]}
+    assert got == expected, rep["results"]

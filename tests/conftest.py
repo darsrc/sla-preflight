@@ -35,10 +35,16 @@ def approved_render(fx, tmp_path_factory):
 # outdst 0 = screen (RGB), 1 = printer (CMYK). Set every option explicitly:
 # PDFfile() starts from the settings of the previous export.
 SCRIBUS_EXPORTS = {
-    "print_ready": dict(useDocBleeds=True, outdst=1, fontEmbedding=1),
+    "print_ready": dict(useDocBleeds=True, outdst=1, fontEmbedding=1, cropMarks=False,
+                        bleedMarks=False, registrationMarks=False),
     "no_bleed": dict(useDocBleeds=False, bleedt=0.0, bleedb=0.0, bleedl=0.0, bleedr=0.0,
                      outdst=1, fontEmbedding=1),
     "embedded_rgb": dict(useDocBleeds=True, outdst=0, fontEmbedding=0),
+    "marks_bleed": dict(useDocBleeds=True, outdst=1, fontEmbedding=1, cropMarks=True,
+                        bleedMarks=True, registrationMarks=True),
+    "marks_no_bleed": dict(useDocBleeds=False, bleedt=0.0, bleedb=0.0, bleedl=0.0, bleedr=0.0,
+                           outdst=1, fontEmbedding=1, cropMarks=True, bleedMarks=False,
+                           registrationMarks=False),
 }
 
 

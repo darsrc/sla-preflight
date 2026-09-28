@@ -22,12 +22,25 @@ def _open(ctx: Context) -> pikepdf.Pdf:
         raise FileNotFoundError(f"{ctx.pdf_path.name}: not a readable PDF: {e}") from e
 
 
-def _box_size_in(page) -> tuple[float, float]:
-    x0, y0, x1, y1 = (float(v) for v in page.MediaBox)
-    w, h = abs(x1 - x0) / 72, abs(y1 - y0) / 72
-    if int(page.obj.get("/Rotate", 0)) % 180:
-        w, h = h, w
-    return w, h
+def _box(page, key: str):
+    """A page box as (x0, y0, x1, y1) in points, normalised; None if absent."""
+    v = page.obj.get(key)
+    if v is None:
+        return None
+    x0, y0, x1, y1 = (float(n) for n in v)
+    return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+
+def _page_geometry(page):
+    """(trim box or None, bleed box, rotated?). The bleed box falls back to
+    CropBox then MediaBox (PDF defaults) and is clipped to the MediaBox; a
+    MediaBox bigger than the bleed box just holds printer marks."""
+    media = _box(page, "/MediaBox")
+    bleed = _box(page, "/BleedBox") or _box(page, "/CropBox") or media
+    bleed = (max(bleed[0], media[0]), max(bleed[1], media[1]),
+             min(bleed[2], media[2]), min(bleed[3], media[3]))
+    rotated = int(page.obj.get("/Rotate", 0)) % 180 != 0
+    return _box(page, "/TrimBox"), bleed, rotated
 
 
 def _resource_dicts(resources, seen=None):
@@ -85,10 +98,11 @@ def _is_rgb(cs, resources=None, depth=0) -> bool:
     inputs=("sla", "pdf"),
     rules=("pdf_bleed",),
     explain=(
-        "When pdf_bleed.required is true, reads each PDF page's MediaBox (and TrimBox/BleedBox "
-        "when present) and compares the size with the .sla page size plus the .sla document "
-        "bleed on each side. A PDF the size of trim was exported without bleed; a document "
-        "with zero bleed fails too. The bleed amount itself is checked by page_matches_die."
+        "When pdf_bleed.required is true, reads each PDF page's TrimBox and BleedBox (falling "
+        "back to CropBox/MediaBox), checks the trim equals the .sla page and the bleed on each "
+        "side equals the .sla document bleed. Printer marks outside the bleed box are ignored. "
+        "A PDF with no bleed, or a document with zero bleed, fails. The bleed amount itself is "
+        "checked by page_matches_die."
     ),
     fix="Re-export with File > Export > PDF > Pre-Press: 'Use Document Bleeds' on.",
 )
@@ -117,24 +131,63 @@ def pdf_page_box(ctx: Context) -> CheckResult:
                 ))
             for i, page in enumerate(pdf.pages):
                 sla_page = doc.pages[min(i, len(doc.pages) - 1)]
-                tw, th = pt_to_in(sla_page.width), pt_to_in(sla_page.height)
-                ew, eh = tw + b["left"] + b["right"], th + b["top"] + b["bottom"]
-                w, h = _box_size_in(page)
-                if abs(w - ew) <= tol and abs(h - eh) <= tol:
-                    continue
-                trim_sized = abs(w - tw) <= tol and abs(h - th) <= tol
-                findings.append(Finding.from_rule(
-                    rule, page_label(i),
-                    measured={"width_in": r6(w), "height_in": r6(h)},
-                    threshold={"width_in": r6(ew), "height_in": r6(eh), "tolerance_in": tol},
-                    message=("PDF page is trim size: it was exported without bleed."
-                             if trim_sized else "PDF page is not trim + bleed."),
-                ))
+                findings += _check_page_box(rule, page, i, sla_page, b, tol)
     return finalize(
         "pdf_page_box", "deterministic", findings, rules,
-        "PDF page size is trim plus bleed.",
-        f"PDF page size is not trim plus bleed: {findings[0].message}" if findings else "",
+        "PDF trim and bleed match the .sla document.",
+        f"PDF bleed is wrong: {findings[0].message}" if findings else "",
     )
+
+
+def _check_page_box(rule, page, i, sla_page, b, tol) -> list[Finding]:
+    """Compare one PDF page with the .sla page (trim) and document bleed.
+    With a TrimBox (Scribus always writes one) each side's bleed is measured
+    between TrimBox and BleedBox, so printer marks do not matter; without
+    one, the bleed box size is compared with trim + bleed."""
+    tw, th = pt_to_in(sla_page.width), pt_to_in(sla_page.height)
+    trim, bleed, rotated = _page_geometry(page)
+    thr_b = {f"bleed_{k}_in": r6(v) for k, v in b.items()}
+    thr_b["tolerance_in"] = tol
+    out = []
+    if trim is not None and not rotated:
+        pw, ph = (trim[2] - trim[0]) / 72, (trim[3] - trim[1]) / 72
+        if abs(pw - tw) > tol or abs(ph - th) > tol:
+            out.append(Finding.from_rule(
+                rule, page_label(i),
+                measured={"trim_width_in": r6(pw), "trim_height_in": r6(ph)},
+                threshold={"trim_width_in": r6(tw), "trim_height_in": r6(th), "tolerance_in": tol},
+                message="PDF TrimBox differs from the .sla page size.",
+            ))
+        # PDF y runs upwards: bottom bleed is at low y
+        got = {"left": (trim[0] - bleed[0]) / 72, "right": (bleed[2] - trim[2]) / 72,
+               "top": (bleed[3] - trim[3]) / 72, "bottom": (trim[1] - bleed[1]) / 72}
+        wrong = {k: v for k, v in got.items() if abs(v - b[k]) > tol}
+        if wrong:
+            none = all(v <= tol for v in got.values())
+            out.append(Finding.from_rule(
+                rule, page_label(i),
+                measured={f"bleed_{k}_in": r6(v) for k, v in got.items()},
+                threshold=thr_b,
+                message=("PDF has no bleed: it was exported without bleed." if none else
+                         "PDF bleed differs from the document bleed on the "
+                         + ", ".join(wrong) + " side" + ("s" if len(wrong) > 1 else "") + "."),
+            ))
+        return out
+    # no TrimBox (or rotated page): compare overall size
+    w, h = (bleed[2] - bleed[0]) / 72, (bleed[3] - bleed[1]) / 72
+    if rotated:
+        w, h = h, w
+    ew, eh = tw + b["left"] + b["right"], th + b["top"] + b["bottom"]
+    if abs(w - ew) > tol or abs(h - eh) > tol:
+        trim_sized = abs(w - tw) <= tol and abs(h - th) <= tol
+        out.append(Finding.from_rule(
+            rule, page_label(i),
+            measured={"width_in": r6(w), "height_in": r6(h)},
+            threshold={"width_in": r6(ew), "height_in": r6(eh), "tolerance_in": tol},
+            message=("PDF page is trim size: it was exported without bleed."
+                     if trim_sized else "PDF page is not trim + bleed."),
+        ))
+    return out
 
 
 @check(

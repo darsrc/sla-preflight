@@ -240,3 +240,39 @@ def test_font_sizes_resolved(fx):
     doc = parse_sla(fx["sla"]["small_type"])
     (f,) = doc.find("disclaimer")
     assert sorted({r.size_pt for r in f.runs if r.text.strip()}) == [4.5, 5.0]
+
+
+def test_style_chain_font_size(fx):
+    doc = parse_sla(fx["sla"]["style_small_type"])
+    (f,) = doc.find("disclaimer")
+    assert {r.size_pt for r in f.runs if r.text.strip()} == {4.5}
+
+
+def test_rotated_bbox(fx):
+    doc = parse_sla(fx["sla"]["rotated_ok"])
+    (f,) = doc.find("badge")
+    # 0.90 x 0.20 in, rotated 90 degrees clockwise about its top-left
+    assert [round(v / 72, 6) for v in f.bbox()] == [3.1, 0.38, 3.3, 1.28]
+
+
+def test_master_items_placed_on_their_pages(fx):
+    doc = parse_sla(fx["sla"]["master_note_near_trim"])
+    (f,) = doc.find("master_note")
+    assert f.master == "Label" and f.page == 0
+    assert round(f.x / 72, 6) == 0.02
+    # beneath the page's own items
+    assert doc.frames[0].master == "Label"
+
+
+def test_linked_continuation_counts_as_filled(fx):
+    doc = parse_sla(fx["sla"]["linked_manufacturer"])
+    (cont,) = doc.find("manufacturer")
+    assert cont.text == "" and doc.has_text(cont)
+    assert doc.chain_head(cont).name == "manufacturer_head"
+
+
+def test_pages_indexed(fx):
+    doc = parse_sla(fx["sla"]["two_pages"])
+    assert len(doc.pages) == 2
+    (f,) = doc.find("back_edge")
+    assert f.page == 1 and round(f.x / 72, 6) == 0.02

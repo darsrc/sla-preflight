@@ -86,6 +86,9 @@ class Frame:
     fill_color: str | None
     parent: str | None = None
     runs: list[TextRun] = field(default_factory=list)
+    next_item: str | None = None  # linked text frames: ItemID of the next frame
+    back_item: str | None = None  # ItemID of the previous frame in the chain
+    master: str | None = None  # name of the master page this item comes from
     children: list["Frame"] = field(default_factory=list)
 
     @property
@@ -149,6 +152,24 @@ class Document:
     def find(self, name: str) -> list[Frame]:
         return [f for f in self.all_frames() if f.name == name]
 
+    def chain_head(self, frame: Frame) -> Frame:
+        """First frame of a linked text chain (Scribus stores the whole
+        story there; continuation frames carry no text of their own)."""
+        by_id = {f.item_id: f for f in self.all_frames() if f.item_id}
+        cur, seen = frame, set()
+        while cur.back_item and cur.back_item in by_id and cur.item_id not in seen:
+            seen.add(cur.item_id)
+            cur = by_id[cur.back_item]
+        return cur
+
+    def has_text(self, frame: Frame) -> bool:
+        """Non-text frames count as filled. A frame in a linked chain counts
+        as filled when the chain's story has text (which part of the story
+        lands in which frame needs Scribus layout, see frame_overflow)."""
+        if not frame.is_text:
+            return True
+        return bool(self.chain_head(frame).text.strip())
+
     def layer_printable(self, frame: Frame) -> bool:
         layer = self.layers.get(frame.layer)
         return True if layer is None else layer.printable
@@ -162,7 +183,16 @@ def _f(el: ET.Element, key: str, default: float = 0.0) -> float:
 
 
 class _Styles:
-    """Resolve font size through paragraph and character style chains."""
+    """Resolve character attributes (font size, font) the way Scribus does:
+
+    run attributes > run's character style chain > paragraph: its own
+    attributes > its character style (CPARENT) chain > its parent paragraph
+    style (PARENT) chain > the frame's default style likewise > the
+    document's default paragraph and character styles > DOCUMENT DSIZE/DFONT.
+    """
+
+    DEFAULT_PARA = "Default Paragraph Style"
+    DEFAULT_CHAR = "Default Character Style"
 
     def __init__(self, doc_el: ET.Element):
         self.default_size = _f(doc_el, "DSIZE", 12.0)
@@ -170,33 +200,51 @@ class _Styles:
         self.para = {s.get("NAME"): s for s in doc_el.findall("STYLE")}
         self.char = {s.get("CNAME"): s for s in doc_el.findall("CHARSTYLE")}
 
-    def _chain(self, table: dict, name: str | None, key: str, depth: int = 0):
-        while name and depth < 20:
-            st = table.get(name)
+    def _char_chain(self, name: str | None, key: str) -> str | None:
+        for _ in range(20):
+            st = self.char.get(name) if name else None
             if st is None:
                 return None
             if st.get(key) not in (None, ""):
                 return st.get(key)
-            name = st.get("PARENT") or st.get("CPARENT")
-            depth += 1
+            name = st.get("CPARENT") or st.get("PARENT")
+        return None
+
+    def _para_chain(self, name: str | None, key: str) -> str | None:
+        for _ in range(20):
+            st = self.para.get(name) if name else None
+            if st is None:
+                return None
+            if st.get(key) not in (None, ""):
+                return st.get(key)
+            v = self._char_chain(st.get("CPARENT"), key)
+            if v is not None:
+                return v
+            name = st.get("PARENT")
         return None
 
     def resolve(self, key: str, el: ET.Element | None, para_style: ET.Element | None,
                 default_style: ET.Element | None) -> str | None:
-        # char attributes > char style > paragraph (local, then style chain)
-        # > frame default style > document default
-        for src in (el, para_style, default_style):
+        if el is not None:
+            if el.get(key) not in (None, ""):
+                return el.get(key)
+            v = self._char_chain(el.get("CPARENT"), key)
+            if v is not None:
+                return v
+        for src in (para_style, default_style):
             if src is None:
                 continue
             if src.get(key) not in (None, ""):
                 return src.get(key)
-            v = self._chain(self.char, src.get("CPARENT"), key)
+            v = self._char_chain(src.get("CPARENT"), key)
+            if v is None:
+                v = self._para_chain(src.get("PARENT"), key)
             if v is not None:
                 return v
-            v = self._chain(self.para, src.get("PARENT"), key)
-            if v is not None:
-                return v
-        return None
+        v = self._para_chain(self.DEFAULT_PARA, key)
+        if v is None:
+            v = self._char_chain(self.DEFAULT_CHAR, key)
+        return v
 
 
 def _parse_story(obj: ET.Element, styles: _Styles) -> list[TextRun]:
@@ -244,12 +292,13 @@ def _parse_object(
     origin: tuple[float, float] | None,
     scale: tuple[float, float],
     parent: str | None,
+    page_override: Page | None = None,
 ) -> Frame:
     ptype = int(_f(obj, "PTYPE", -1))
     if origin is None:
         # top-level: XPOS/YPOS are canvas coordinates; make page-relative
         own = int(_f(obj, "OwnPage", -1))
-        page = pages[own] if 0 <= own < len(pages) else None
+        page = page_override or (pages[own] if 0 <= own < len(pages) else None)
         px, py = (page.x, page.y) if page else (0.0, 0.0)
         x = _f(obj, "XPOS") - px
         y = _f(obj, "YPOS") - py
@@ -276,6 +325,8 @@ def _parse_object(
         line_width=_f(obj, "PWIDTH", 1.0) * min(scale),
         fill_color=obj.get("PCOLOR"),
         parent=parent,
+        next_item=_link(obj.get("NEXTITEM")),
+        back_item=_link(obj.get("BACKITEM")),
     )
     if ptype == 4:
         frame.runs = _parse_story(obj, styles)
@@ -290,6 +341,10 @@ def _parse_object(
             frame.children.append(c)
         _propagate_page(frame, frame.page)
     return frame
+
+
+def _link(v: str | None) -> str | None:
+    return None if v in (None, "", "-1") else v
 
 
 def _propagate_page(frame: Frame, page: int | None) -> None:
@@ -342,4 +397,33 @@ def parse_sla(path: str | Path) -> Document:
         _parse_object(o, styles, pages, None, (1.0, 1.0), None)
         for o in doc_el.findall("PAGEOBJECT")
     ]
-    return Document(p, root.get("Version", ""), pages, layers, bleed, frames)
+    # Master page items print on every page that uses the master, beneath
+    # the page's own items. They are placed relative to their master page.
+    masters = {
+        m.get("NAM", ""): Page(int(_f(m, "NUM")), _f(m, "PAGEXPOS"), _f(m, "PAGEYPOS"),
+                               _f(m, "PAGEWIDTH"), _f(m, "PAGEHEIGHT"))
+        for m in doc_el.findall("MASTERPAGE")
+    }
+    master_objs: dict[str, list[ET.Element]] = {}
+    for o in doc_el.findall("MASTEROBJECT"):
+        master_objs.setdefault(o.get("OnMasterPage", ""), []).append(o)
+    master_frames: list[Frame] = []
+    for i, pg_el in enumerate(doc_el.findall("PAGE")):
+        mname = pg_el.get("MNAM", "")
+        if mname not in masters or mname not in master_objs:
+            continue
+        page_index = int(_f(pg_el, "NUM", i))
+        for o in master_objs[mname]:
+            f = _parse_object(o, styles, pages, None, (1.0, 1.0), None,
+                              page_override=masters[mname])
+            f.page = page_index
+            _propagate_page(f, page_index)
+            _mark_master(f, mname)
+            master_frames.append(f)
+    return Document(p, root.get("Version", ""), pages, layers, bleed, master_frames + frames)
+
+
+def _mark_master(frame: Frame, name: str) -> None:
+    frame.master = name
+    for c in frame.children:
+        _mark_master(c, name)

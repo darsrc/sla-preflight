@@ -46,6 +46,23 @@ CASES = [
     ("claim_disclaimer_pairing", "good", None, "pass", None, None),
     ("claim_disclaimer_pairing", "no_claim_no_disclaimer", None, "pass", None, None),
     ("claim_disclaimer_pairing", "claim_no_disclaimer", None, "fail", {"disclaimer"}, f"{BRAND}#claim_disclaimer"),
+    # font size reached only through paragraph style -> character style
+    ("min_type_size", "style_ok_type", None, "pass", None, None),
+    ("min_type_size", "style_small_type", None, "fail", {"disclaimer"}, f"{BRAND}#min_type_size"),
+    # rotation decides whether the frame is inside the safe area
+    ("trim_safety", "rotated_ok", None, "pass", None, None),
+    ("trim_safety", "rotated_near_trim", None, "fail", {"badge"}, f"{PRINTER}#safe_margin"),
+    # multi-page: problems found on page 2; same coordinates on different pages don't overlap
+    ("page_matches_die", "two_pages", None, "pass", None, None),
+    ("trim_safety", "two_pages", None, "fail", {"back_edge"}, f"{PRINTER}#safe_margin"),
+    ("frame_overlap", "two_pages", None, "pass", None, None),
+    # master page items are checked on the pages that use them
+    ("trim_safety", "master_note_near_trim", None, "fail", {"master_note"}, f"{PRINTER}#safe_margin"),
+    ("required_elements", "manufacturer_on_master", None, "pass", None, None),
+    ("bleed_coverage", "manufacturer_on_master", None, "pass", None, None),
+    # a required frame that continues a linked text chain is not empty
+    ("required_elements", "linked_manufacturer", None, "pass", None, None),
+    ("frame_overlap", "linked_manufacturer", None, "pass", None, None),
 ]
 
 
@@ -121,6 +138,9 @@ def test_missing_sla_is_error(tmp_path):
 @pytest.mark.parametrize("sla,status,objects", [
     ("good", "pass", None),
     ("text_overflow", "fail", {"disclaimer"}),
+    # linked chain: only the last frame of an overflowing chain is reported
+    ("linked_manufacturer", "pass", None),
+    ("linked_overflow", "fail", {"manufacturer"}),
 ])
 def test_frame_overflow(fx, tmp_path, sla, status, objects):
     res = run_one(fx, "frame_overflow", sla, tmp_path=tmp_path)
@@ -144,9 +164,36 @@ def test_render_regression(fx, tmp_path, approved_render, sla, status, objects):
     ("print_ready", {"pdf_page_box": "pass", "pdf_fonts_outlined": "pass", "pdf_color_space": "pass"}),
     ("no_bleed", {"pdf_page_box": "fail", "pdf_fonts_outlined": "pass", "pdf_color_space": "pass"}),
     ("embedded_rgb", {"pdf_fonts_outlined": "fail", "pdf_color_space": "fail"}),
+    # crop marks enlarge the MediaBox; the bleed is still judged correctly
+    ("marks_bleed", {"pdf_page_box": "pass"}),
+    ("marks_no_bleed", {"pdf_page_box": "fail"}),
 ])
 def test_pdf_checks_on_real_scribus_exports(fx, scribus_pdfs, tmp_path, export, expected):
     rep = run_checks(fx["sla"]["good"], "test_final", pdf_path=scribus_pdfs[export],
                      out_dir=tmp_path, only=list(expected))
     got = {r["check"]: r["status"] for r in rep["results"]}
     assert got == expected, rep["results"]
+
+
+@requires_scribus
+def test_linked_overflow_names_only_the_last_frame(fx, tmp_path):
+    res = run_one(fx, "frame_overflow", "linked_overflow", tmp_path=tmp_path)
+    assert {f["object"] for f in res["findings"]} == {"manufacturer"}
+
+
+@requires_scribus
+def test_confined_font_folder(fx, tmp_path):
+    """Scribus runs with only the fonts in a given folder."""
+    import shutil
+    from pathlib import Path
+
+    from sla_preflight.scribus import render_png, text_overflows
+
+    src = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    if not src.is_file():
+        pytest.skip("DejaVu Sans not installed")
+    fonts = tmp_path / "fonts"
+    fonts.mkdir()
+    shutil.copy(src, fonts)
+    assert text_overflows(fx["sla"]["text_overflow"], fonts_dir=fonts)["disclaimer"] is True
+    assert render_png(fx["sla"]["good"], tmp_path / "r.png", dpi=72, fonts_dir=fonts).is_file()

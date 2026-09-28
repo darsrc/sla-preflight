@@ -87,7 +87,22 @@ reads, and how to fix a failure. Designed for v0.2 but not built:
 Checks find objects by their Scribus **name** (Properties > Name), so a layout
 must name the frames its packs refer to (e.g. `manufacturer`, `serving_info`,
 `lot_box`). Geometry uses exact XML values in points, including group scaling,
-rotation and visible strokes.
+rotation and visible strokes. Also handled:
+
+- **Master pages**: master items are checked on every page that uses the
+  master (the result says `master_page`).
+- **Multi-page documents**: each object is measured against its own page.
+- **Linked text frames**: the story lives in the first frame of the chain; a
+  continuation frame counts as filled when the chain has text, and overflow
+  is reported only on the chain's last frame.
+- **Styles**: font sizes are resolved through character and paragraph style
+  chains, not just direct formatting.
+- **Printer marks**: `pdf_page_box` measures bleed between TrimBox and
+  BleedBox, so crop/bleed/registration marks do not cause false failures.
+
+Not yet handled: Scribus 1.4 files, text on paths, tables, and non-rectangular
+overlap (overlap uses bounding boxes, so rotated or shaped frames can report
+an overlap that is not really there).
 
 ## Result schema
 

@@ -23,13 +23,18 @@ def _state(ctx: Context, name: str) -> tuple[str, object]:
             st = "off_page"
         elif not doc.layer_printable(f):
             st = "not_printing"
-        elif f.is_text and not f.text.strip():
+        elif not doc.has_text(f):
             st = "empty"
         else:
             st = "ok"
         if best is None or order.index(st) < order.index(best[0]):
             best = (st, f)
     return best
+
+
+def doc_text(ctx: Context, frame) -> str:
+    """Text of a frame's story (the chain head's, for linked frames)."""
+    return ctx.doc.chain_head(frame).text
 
 
 PROBLEM_TEXT = {
@@ -108,7 +113,7 @@ def facts_math(ctx: Context) -> CheckResult:
         st, frame = _state(ctx, name)
         if st != "ok":
             raise CheckInputError(f"frame {name!r} {PROBLEM_TEXT[st]}; cannot check the math")
-        return frame.text
+        return doc_text(ctx, frame)
 
     def number(pattern: str, text: str, what: str, frame: str) -> int:
         m = re.search(pattern, text)

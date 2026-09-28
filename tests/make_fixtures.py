@@ -41,6 +41,9 @@ class Obj:
     rotation: float = 0.0
     children: list["Obj"] = field(default_factory=list)
     group_scale: tuple[float, float] = (1.0, 1.0)  # group resized after grouping
+    page: int = 0
+    para_style: str | None = None  # paragraph style; text sizes of None come from it
+    link_to: str | None = None  # name of the next frame in a linked text chain
 
 
 @dataclass
@@ -50,6 +53,11 @@ class Label:
     bleed: float = BLEED
     objects: list[Obj] = field(default_factory=list)
     layers: list[tuple[str, bool]] = field(default_factory=lambda: [("Background", True)])
+    pages: int = 1
+    # extra STYLE / CHARSTYLE elements: (tag, attributes)
+    styles: list[tuple[str, dict]] = field(default_factory=list)
+    masters: dict[str, list[Obj]] = field(default_factory=dict)
+    page_master: dict[int, str] = field(default_factory=dict)  # page -> master name
 
     def get(self, name: str) -> Obj:
         for o in self._walk(self.objects):
@@ -59,6 +67,11 @@ class Label:
 
     def remove(self, name: str) -> None:
         self.objects = [o for o in self.objects if o.name != name]
+
+    def _walk_all(self):
+        yield from self._walk(self.objects)
+        for objs in self.masters.values():
+            yield from self._walk(objs)
 
     def _walk(self, objs):
         for o in objs:
@@ -106,34 +119,56 @@ def _attrs(**kw) -> dict[str, str]:
     return {k: (f"{v:g}" if isinstance(v, float) else str(v)) for k, v in kw.items()}
 
 
-def _object_el(o: Obj, parent_origin_pt=None, item_id=[1000]) -> ET.Element:
-    item_id[0] += 1
+def _page_origin(label: Label, page: int) -> tuple[float, float]:
+    """Canvas position of a page: pages are stacked vertically, 40 pt apart."""
+    return PAGE_X, PAGE_Y + page * (label.page_h * PT + 40.0)
+
+
+def _object_el(o: Obj, label: Label, ids: dict[str, int], linked_to: set[str],
+               parent_origin_pt=None, tag="PAGEOBJECT", master: tuple[str, int] | None = None
+               ) -> ET.Element:
     w, h = o.w * PT, o.h * PT
-    if parent_origin_pt is None:
-        pos = dict(XPOS=PAGE_X + o.x * PT, YPOS=PAGE_Y + o.y * PT, gXpos=0.0, gYpos=0.0)
-    else:
+    if parent_origin_pt is not None:
         # group children: offset inside the (unscaled) group
         pos = dict(XPOS=0.0, YPOS=0.0,
                    gXpos=o.x * PT - parent_origin_pt[0], gYpos=o.y * PT - parent_origin_pt[1])
+        own = master[1] if master else o.page
+    else:
+        # master items sit on their master page, which is drawn at the canvas origin
+        px, py = (PAGE_X, PAGE_Y) if master else _page_origin(label, o.page)
+        pos = dict(XPOS=px + o.x * PT, YPOS=py + o.y * PT, gXpos=0.0, gYpos=0.0)
+        own = master[1] if master else o.page
     ptype = {"text": 4, "shape": 6, "group": 12}[o.kind]
+    nxt = ids[o.link_to] if o.link_to else -1
+    back = next((ids[k] for k, v in _links(label).items() if v == o.name), -1)
     a = _attrs(
-        **pos, OwnPage=0, ItemID=item_id[0], PTYPE=ptype, WIDTH=w, HEIGHT=h,
+        **pos, OwnPage=own, ItemID=ids[o.name], PTYPE=ptype, WIDTH=w, HEIGHT=h,
         ROT=float(o.rotation), ANNAME=o.name, LAYER=o.layer,
         PWIDTH=float(o.line_width), PCOLOR=o.fill or "None", PCOLOR2=o.line_color or "None",
         FRTYPE=0, CLIPEDIT=0, PLINEART=1, COLUMNS=1, COLGAP=0.0, AUTOTEXT=0,
         EXTRA=0.0, TEXTRA=0.0, BEXTRA=0.0, REXTRA=0.0, FLOP=1,
         path=f"M0 0 L{w:g} 0 L{w:g} {h:g} L0 {h:g} L0 0 Z",
-        NEXTITEM=-1, BACKITEM=-1,
+        NEXTITEM=nxt, BACKITEM=back,
     )
-    el = ET.Element("PAGEOBJECT", a)
-    if o.kind == "text":
+    if master:
+        a["OnMasterPage"] = master[0]
+    el = ET.Element(tag, a)
+    # continuation frames of a linked chain carry no story (Scribus stores it
+    # in the first frame)
+    if o.kind == "text" and o.name not in linked_to:
         st = ET.SubElement(el, "StoryText")
         # fixed line spacing of 1.2 x the largest size; Scribus' document
         # default is a fixed 15 pt, too loose for small label type
-        lsp = _attrs(LINESPMode=0, LINESP=1.2 * max((sz for _, sz in o.text), default=12.0))
+        sizes = [sz for _, sz in o.text if sz is not None]
+        lsp = _attrs(LINESPMode=0, LINESP=1.2 * max(sizes, default=12.0))
+        if o.para_style:
+            lsp["PARENT"] = o.para_style
         ET.SubElement(st, "DefaultStyle", lsp)
         for i, (para, size) in enumerate(o.text):
-            ET.SubElement(st, "ITEXT", _attrs(FONT=FONT, FONTSIZE=float(size), CH=para))
+            run = {"FONT": FONT, "CH": para}
+            if size is not None:
+                run["FONTSIZE"] = f"{float(size):g}"
+            ET.SubElement(st, "ITEXT", run)
             ET.SubElement(st, "trail" if i == len(o.text) - 1 else "para", lsp)
         if not o.text:
             ET.SubElement(st, "trail")
@@ -144,31 +179,51 @@ def _object_el(o: Obj, parent_origin_pt=None, item_id=[1000]) -> ET.Element:
         el.set("groupWidth", f"{w / sx:g}")
         el.set("groupHeight", f"{h / sy:g}")
         for c in o.children:
-            el.append(_object_el(c, (0.0, 0.0), item_id))
+            el.append(_object_el(c, label, ids, linked_to, (0.0, 0.0), master=master))
     return el
+
+
+def _links(label: Label) -> dict[str, str]:
+    return {o.name: o.link_to for o in label._walk_all() if o.link_to}
 
 
 def write_sla(label: Label, path: Path) -> Path:
     root = ET.Element("SCRIBUSUTF8NEW", Version="1.6.1")
     w, h, b = label.page_w * PT, label.page_h * PT, label.bleed * PT
     doc = ET.SubElement(root, "DOCUMENT", _attrs(
-        ANZPAGES=1, PAGEWIDTH=w, PAGEHEIGHT=h, BORDERLEFT=0.0, BORDERRIGHT=0.0,
+        ANZPAGES=label.pages, PAGEWIDTH=w, PAGEHEIGHT=h, BORDERLEFT=0.0, BORDERRIGHT=0.0,
         BORDERTOP=0.0, BORDERBOTTOM=0.0, ORIENTATION=0, PAGESIZE="Custom", FIRSTNUM=1,
         BOOK=0, UNITS=0, DFONT=FONT, DSIZE=12.0,
         BleedTop=b, BleedLeft=b, BleedRight=b, BleedBottom=b,
     ))
     for name, c, m, y, k in (("Black", 0, 0, 0, 100), ("White", 0, 0, 0, 0)):
         ET.SubElement(doc, "COLOR", _attrs(NAME=name, SPACE="CMYK", C=c, M=m, Y=y, K=k))
+    for tag, attrs in label.styles:
+        ET.SubElement(doc, tag, {k: str(v) for k, v in attrs.items()})
     for i, (name, prints) in enumerate(label.layers):
         ET.SubElement(doc, "LAYERS", _attrs(
             NUMMER=i, LEVEL=i, NAME=name, SICHTBAR=1, DRUCKEN=int(prints), EDIT=1,
             SELECT=0, FLOW=1, TRANS=1.0, BLEND=0, OUTL=0, LAYERC="#000000"))
-    ET.SubElement(doc, "PAGE", _attrs(
-        PAGEXPOS=PAGE_X, PAGEYPOS=PAGE_Y, PAGEWIDTH=w, PAGEHEIGHT=h, BORDERLEFT=0.0,
-        BORDERRIGHT=0.0, BORDERTOP=0.0, BORDERBOTTOM=0.0, NUM=0, NAM="", MNAM="Normal",
-        Size="Custom", Orientation=0, LEFT=0))
+    masters = ["Normal"] + [m for m in label.masters if m != "Normal"]
+    for i, name in enumerate(masters):
+        ET.SubElement(doc, "MASTERPAGE", _attrs(
+            PAGEXPOS=PAGE_X, PAGEYPOS=PAGE_Y, PAGEWIDTH=w, PAGEHEIGHT=h, BORDERLEFT=0.0,
+            BORDERRIGHT=0.0, BORDERTOP=0.0, BORDERBOTTOM=0.0, NUM=i, NAM=name, MNAM="",
+            Size="Custom", Orientation=0, LEFT=0))
+    for n in range(label.pages):
+        px, py = _page_origin(label, n)
+        ET.SubElement(doc, "PAGE", _attrs(
+            PAGEXPOS=px, PAGEYPOS=py, PAGEWIDTH=w, PAGEHEIGHT=h, BORDERLEFT=0.0,
+            BORDERRIGHT=0.0, BORDERTOP=0.0, BORDERBOTTOM=0.0, NUM=n, NAM="",
+            MNAM=label.page_master.get(n, "Normal"), Size="Custom", Orientation=0, LEFT=0))
+    ids = {o.name: 1001 + i for i, o in enumerate(label._walk_all())}
+    linked_to = set(_links(label).values())
+    for name, objs in label.masters.items():
+        for o in objs:
+            doc.append(_object_el(o, label, ids, linked_to, tag="MASTEROBJECT",
+                                  master=(name, masters.index(name))))
     for o in label.objects:
-        doc.append(_object_el(o))
+        doc.append(_object_el(o, label, ids, linked_to))
     ET.indent(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(root).write(path, encoding="UTF-8", xml_declaration=True)
@@ -323,6 +378,79 @@ def _no_claim_no_disclaimer(l: Label):
     l.get("disclaimer").text = []
 
 
+def _style_small_type(l: Label):
+    # 4.5 pt reached only through paragraph style -> character style
+    l.styles += [("CHARSTYLE", {"CNAME": "tiny", "FONTSIZE": "4.5"}),
+                 ("STYLE", {"NAME": "fine_print", "CPARENT": "tiny"})]
+    d = l.get("disclaimer")
+    d.para_style = "fine_print"
+    d.text = [(t, None) for t, _ in d.text]
+
+
+def _style_ok_type(l: Label):
+    l.styles += [("CHARSTYLE", {"CNAME": "small", "FONTSIZE": "6.5"}),
+                 ("STYLE", {"NAME": "fine_print", "CPARENT": "small"})]
+    d = l.get("disclaimer")
+    d.para_style = "fine_print"
+    d.text = [(t, None) for t, _ in d.text]
+
+
+def _rotated_ok(l: Label):
+    # unrotated this would run 0.2 in past the right trim; rotated 90 degrees
+    # clockwise about its top-left it hangs down inside the safe area
+    l.objects.append(text("badge", 3.30, 0.38, 0.90, 0.20, "NEW", size=8, rotation=90.0))
+
+
+def _rotated_near_trim(l: Label):
+    # rotated 270 degrees it points up, through the top trim edge
+    l.objects.append(text("badge", 3.30, 0.38, 0.90, 0.20, "NEW", size=8, rotation=270.0))
+
+
+def _two_pages(l: Label):
+    # page 2 reuses page 1's coordinates (no overlap across pages) and has
+    # one frame too close to trim
+    l.pages = 2
+    c = l.get("claim")
+    l.objects += [
+        text("back_text", c.x, c.y, c.w, c.h, "Back panel text", size=7, page=1),
+        text("back_edge", 0.02, 1.00, 1.00, 0.15, "Too close", size=7, page=1),
+    ]
+
+
+def _to_master(l: Label, *names: str, extra: tuple = ()) -> None:
+    """Move frames onto master page 'Label' (drawn beneath page items), with
+    the background band, as a real layout would keep it."""
+    moved = [l.get(n) for n in ("bg_band",) + names]
+    for n in ("bg_band",) + names:
+        l.remove(n)
+    l.masters["Label"] = moved + list(extra)
+    l.page_master[0] = "Label"
+
+
+def _master_note_near_trim(l: Label):
+    _to_master(l, extra=(text("master_note", 0.02, 1.00, 0.20, 0.15, "M", size=7),))
+
+
+def _manufacturer_on_master(l: Label):
+    _to_master(l, "manufacturer")
+
+
+def _linked(l: Label, words: str):
+    m = l.get("manufacturer")
+    l.remove("manufacturer")
+    head = text("manufacturer_head", 0.30, m.y, 1.25, m.h, words, size=6)
+    head.link_to = "manufacturer"
+    l.objects += [head, text("manufacturer", 1.65, m.y, 1.25, m.h, size=6)]
+
+
+def _linked_manufacturer(l: Label):
+    _linked(l, "Made for Example Co., 1 Example Way, Sample City")
+
+
+def _linked_overflow(l: Label):
+    _linked(l, "Made for Example Co., 1 Example Way, Sample City. " * 6)
+
+
 def _render_moved(l: Label):
     l.get("lot_text").x += 0.10
 
@@ -349,6 +477,15 @@ SLA_FIXTURES = {
     "claim_no_disclaimer": _claim_no_disclaimer,
     "no_claim_no_disclaimer": _no_claim_no_disclaimer,
     "render_moved": _render_moved,
+    "style_small_type": _style_small_type,
+    "style_ok_type": _style_ok_type,
+    "rotated_ok": _rotated_ok,
+    "rotated_near_trim": _rotated_near_trim,
+    "two_pages": _two_pages,
+    "master_note_near_trim": _master_note_near_trim,
+    "manufacturer_on_master": _manufacturer_on_master,
+    "linked_manufacturer": _linked_manufacturer,
+    "linked_overflow": _linked_overflow,
 }
 
 FULL_W, FULL_H = DIE_W + 2 * BLEED, DIE_H + 2 * BLEED

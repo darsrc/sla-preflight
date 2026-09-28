@@ -99,7 +99,8 @@ def trim_safety(ctx: Context) -> CheckResult:
                 continue
             finding = Finding.from_rule(
                 rule, f.name or f"unnamed {f.kind}",
-                measured={f"gap_{k}_in": r6(pt_to_in(v)) for k, v in short.items()},
+                measured={**{f"gap_{k}_in": r6(pt_to_in(v)) for k, v in short.items()},
+                          "page": f.page + 1, **({"master_page": f.master} if f.master else {})},
                 threshold={"min_gap_in": min_gap},
                 message=f"{f.name!r} is closer than {min_gap} in to trim on the "
                         + ", ".join(short) + " side" + ("s" if len(short) > 1 else "") + ".",

@@ -1,6 +1,7 @@
 """Helpers shared by checks: units, frame selection, overlap data, evidence."""
 from __future__ import annotations
 
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from ..context import Context
@@ -12,6 +13,57 @@ EPS_PT = 1e-6  # float noise; far below any real layout distance
 class CheckInputError(Exception):
     """The check cannot run on this input (e.g. text it must parse is not
     there). Reported as ``error``, never as ``fail``."""
+
+
+def matches(name: str, patterns) -> bool:
+    """Frame-name lists in packs accept shell wildcards: 'bar_top',
+    '*bar_top', 'Copy of *', 'bg_?'. Matching is case-sensitive."""
+    return bool(name) and any(fnmatchcase(name, p) for p in patterns or ())
+
+
+def any_matches(names, patterns) -> bool:
+    return any(matches(n, patterns) for n in names)
+
+
+def label(f: Frame) -> str:
+    """How a frame is named in results: its Scribus name, or where it is
+    when it has none."""
+    if f.name:
+        return f.name
+    where = f"at ({pt_to_in(f.x):.3f}, {pt_to_in(f.y):.3f}) in"
+    return f"unnamed {f.kind} {where}" + (f" in group {f.parent}" if f.parent else "")
+
+
+def bleed_patterns(ctx: Context, rule) -> list[str]:
+    """Objects allowed to bleed: the printer rule's bleed_allowed plus the
+    frames of every bleed_objects rule (a layout/brand pack names its own
+    bleed objects, e.g. 'Copy of background*')."""
+    pats = list(rule.get("bleed_allowed", []) or [])
+    for r in ctx.rules.all("bleed_objects"):
+        pats += list(r.get("frames", []) or [])
+    return pats
+
+
+def missing_fonts(ctx: Context, available: list[str]) -> list[str]:
+    """Fonts used by printing text that Scribus does not have. Scribus
+    silently substitutes them, which changes text layout."""
+    have = set(available)
+    used = {
+        r.font
+        for f in printing_leaves(ctx.doc) if f.is_text
+        for r in f.runs if r.text.strip() and r.font
+    }
+    return sorted(used - have)
+
+
+def require_fonts(ctx: Context, available: list[str]) -> None:
+    missing = missing_fonts(ctx, available)
+    if missing:
+        raise CheckInputError(
+            f"{len(missing)} font(s) used by the label are not available to Scribus "
+            f"({', '.join(missing)}), so its text layout would be wrong. Install them "
+            "or point --fonts-dir / $SLA_PREFLIGHT_FONTS_DIR at a folder holding them."
+        )
 
 
 def r6(v: float) -> float:
@@ -60,14 +112,13 @@ def overlap_pairs(ctx: Context) -> list[dict]:
         return ctx.cache["overlap_pairs"]
     doc = ctx.doc
     required = {n for r in ctx.rules.all("required_elements") for n in r.get("frames", [])}
-    containers = set()
-    ignore = set()
+    containers: list[tuple[str, str]] = []
+    ignore: list[str] = []
     for r in ctx.rules.all("no_frame_overlap"):
-        for pair in r.get("containers", []) or []:
-            containers.add(frozenset(pair))
-        ignore |= set(r.get("ignore", []) or [])
+        containers += [tuple(pair) for pair in r.get("containers", []) or []]
+        ignore += list(r.get("ignore", []) or [])
     frames = [f for f in printing_leaves(doc)
-              if f.name not in ignore and (f.is_text or f.name in required)]
+              if not matches(f.name, ignore) and (f.is_text or matches(f.name, required))]
     pairs = []
     for i, a in enumerate(frames):
         for b in frames[i + 1:]:
@@ -76,7 +127,8 @@ def overlap_pairs(ctx: Context) -> list[dict]:
             if a.name and a.name == b.name:
                 continue
             na, nb = names_with_ancestry(a, doc), names_with_ancestry(b, doc)
-            if any(frozenset((x, y)) in containers for x in na for y in nb):
+            if any((any_matches(na, [o]) and any_matches(nb, [i])) or
+                   (any_matches(nb, [o]) and any_matches(na, [i])) for o, i in containers):
                 continue
             box = intersection(a.bbox(), b.bbox())
             if box is None:
@@ -152,6 +204,7 @@ def page_label(index: int | None) -> str:
 
 
 __all__ = [
-    "CheckInputError", "r6", "box_in", "printing_leaves", "overlap_pairs",
+    "CheckInputError", "r6", "matches", "any_matches", "label", "bleed_patterns",
+    "missing_fonts", "require_fonts", "box_in", "printing_leaves", "overlap_pairs",
     "schematic_crop", "page_label", "intersection", "names_with_ancestry", "Path",
 ]

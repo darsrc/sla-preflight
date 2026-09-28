@@ -6,8 +6,8 @@ from PIL import Image, ImageChops
 from ..context import Context
 from ..registry import check
 from ..result import CheckResult, Finding, finalize
-from ..scribus import render_png
-from ._common import box_in, intersection, printing_leaves
+from ..scribus import available_fonts, render_png
+from ._common import box_in, intersection, label, printing_leaves, require_fonts
 
 CELL = 8  # px; changed pixels are grouped on this grid into regions
 
@@ -65,6 +65,7 @@ def render_regression(ctx: Context) -> CheckResult:
     thresh = int(rule.get("pixel_threshold", 24))
     max_frac = float(rule.get("max_changed_fraction", 0.0))
     outdir = ctx.check_dir("render_regression")
+    require_fonts(ctx, available_fonts(fonts_dir=ctx.options.get("fonts_dir")))
     current_path = render_png(ctx.sla_path, outdir / "current.png", dpi=dpi,
                               fonts_dir=ctx.options.get("fonts_dir"))
     if not ctx.approved_render.is_file():
@@ -94,7 +95,7 @@ def render_regression(ctx: Context) -> CheckResult:
             hits = [f for f in leaves if intersection(f.ink_bbox(), region_pt)]
             # the most specific object first: smallest frame under the change
             hits.sort(key=lambda f: (f.bbox()[2] - f.bbox()[0]) * (f.bbox()[3] - f.bbox()[1]))
-            names = [f.name or f"unnamed {f.kind}" for f in hits]
+            names = [label(f) for f in hits]
             pad = 12
             crop_box = (max(0, x0 - pad), max(0, y0 - pad),
                         min(cur.size[0], x1 + pad), min(cur.size[1], y1 + pad))

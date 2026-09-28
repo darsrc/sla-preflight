@@ -82,14 +82,32 @@ def run_script(body: str, timeout: float = 120, fonts_dir: str | Path | None = N
     return result
 
 
+def available_fonts(timeout: float = 120, fonts_dir: str | Path | None = None) -> list[str]:
+    """Full names of the fonts Scribus can use (e.g. 'DejaVu Sans Book')."""
+    body = 'RESULT["fonts"] = [f[0] for f in scribus.getXFontNames()]'
+    return run_script(body, timeout, fonts_dir)["fonts"]
+
+
 def text_overflows(sla_path: str | Path, timeout: float = 120,
                    fonts_dir: str | Path | None = None) -> dict[str, bool]:
     """Map each text frame's name to whether its text overflows. Groups are
-    dissolved first (in memory, never saved) so grouped frames are seen."""
+    dissolved first (in memory, never saved) so grouped frames are seen.
+    Frames without a name get the name Scribus gives them on load."""
+    return layout_report(sla_path, timeout, fonts_dir)["overflows"]
+
+
+def layout_report(sla_path: str | Path, timeout: float = 120,
+                  fonts_dir: str | Path | None = None) -> dict:
+    """``{"overflows": {name: bool}, "fonts": [available font names]}`` from
+    one Scribus run."""
     p = Path(sla_path).resolve()
     if not p.is_file():
         raise FileNotFoundError(f"SLA file not found: {p}")
+    # read the font list before opening the document: once a document is
+    # open, Scribus lists each missing font under its own name, mapped to a
+    # substitute, which would hide the problem
     body = f"""
+RESULT["fonts"] = [f[0] for f in scribus.getXFontNames()]
 scribus.openDoc({str(p)!r})
 over = {{}}
 for page in range(1, scribus.pageCount() + 1):
@@ -107,7 +125,7 @@ for page in range(1, scribus.pageCount() + 1):
 RESULT["overflows"] = over
 scribus.closeDoc()
 """
-    return run_script(body, timeout, fonts_dir)["overflows"]
+    return run_script(body, timeout, fonts_dir)
 
 
 def render_png(sla_path: str | Path, out_png: str | Path, dpi: int = 150,

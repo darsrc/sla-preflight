@@ -131,6 +131,37 @@ def load_pack(path: str | Path, name: str | None = None) -> RulePack:
     return RulePack(pack_name, kind, str(data.get("description", "")), p, parsed)
 
 
+def parse_die(text: str) -> tuple[float, float]:
+    """'10.25x2.5', '10.25 x 2.5 in' -> (10.25, 2.5) inches."""
+    import re
+
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[xX\u00d7]\s*(\d+(?:\.\d+)?)\s*(?:in|\")?\s*", text or "")
+    if not m:
+        raise RulePackError(f"die must look like 10.25x2.5 (inches), got {text!r}")
+    w, h = float(m.group(1)), float(m.group(2))
+    if w <= 0 or h <= 0:
+        raise RulePackError(f"die size must be positive, got {text!r}")
+    return w, h
+
+
+def job_pack(die: str | None = None, tolerance_in: float = 0.001) -> RulePack | None:
+    """Job-level settings given at run time (the die is per job, not per
+    printer). Cited as ``job#die``; verified because the person running the
+    check states it for this job."""
+    if not die:
+        return None
+    w, h = parse_die(die)
+    today = _dt.date.today().isoformat()
+    rule = Rule(
+        id="die", description="Die size for this job (given at run time).",
+        source=f"job setting: die {w:g} x {h:g} in given at run time",
+        verified=True, verified_by="run-time job setting", verified_on=today,
+        params={"width_in": w, "height_in": h, "tolerance_in": tolerance_in},
+        pack="job", pack_kind="job",
+    )
+    return RulePack("job", "job", "Run-time job settings", Path("<run time>"), [rule])
+
+
 class RuleSet:
     """All packs loaded for one run. Checks ask for rules by id."""
 

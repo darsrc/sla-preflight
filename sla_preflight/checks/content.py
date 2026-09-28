@@ -6,14 +6,14 @@ import re
 from ..context import Context
 from ..registry import check
 from ..result import CheckResult, Finding, finalize
-from ._common import CheckInputError, overlap_pairs, schematic_crop
+from ._common import CheckInputError, label, matches, overlap_pairs, schematic_crop
 
 
 def _state(ctx: Context, name: str) -> tuple[str, object]:
     """('ok'|'missing'|'off_page'|'not_printing'|'empty', frame or None).
     When several frames share a name, the best one counts."""
     doc = ctx.doc
-    cands = doc.find(name)
+    cands = [f for f in doc.all_frames() if matches(f.name, [name])]
     if not cands:
         return "missing", None
     order = ["ok", "empty", "not_printing", "off_page"]
@@ -77,12 +77,12 @@ def required_elements(ctx: Context) -> CheckResult:
                     continue
                 other = p["under"] if frame is p["top"] else p["top"]
                 f = Finding.from_rule(
-                    rule, name, measured={"problem": "overlapped", "other": other.name},
+                    rule, name, measured={"problem": "overlapped", "other": label(other)},
                     threshold=thr,
-                    message=f"Required frame {name!r} is overlapped by {other.name!r}.",
+                    message=f"Required frame {name!r} is overlapped by {label(other)!r}.",
                 )
                 f.evidence["crop"] = schematic_crop(
-                    ctx, "required_elements", f"{name}__{other.name}", [frame], [other],
+                    ctx, "required_elements", f"{name}__{label(other)}", [frame], [other],
                     region=p["box"])
                 findings.append(f)
     names = sorted({f.object for f in findings})

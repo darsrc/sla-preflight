@@ -10,7 +10,7 @@ from . import registry
 from .context import Context
 from .profiles import load_packs, load_profile
 from .result import CheckResult, error_result, overall_status, skipped_result
-from .rules import RulePackError
+from .rules import RulePackError, job_pack
 from .checks._common import CheckInputError
 from .scribus import ScribusError
 from .sla import SlaError
@@ -47,13 +47,19 @@ def run_checks(
     out_dir: str | Path | None = None,
     approved_render: str | Path | None = None,
     only: list[str] | None = None,
+    fonts_dir: str | Path | None = None,
+    die: str | None = None,
 ) -> dict[str, Any]:
-    """Run every check in ``profile``. Returns
+    """Run every check in ``profile``. ``die`` is the job's die size in
+    inches ('10.25x2.5'). Returns
     ``{"status", "profile", "out_dir", "results": [...]}``."""
     out = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="sla-preflight-"))
     try:
         prof = load_profile(profile)
         rules = load_packs(prof, brand_pack)
+        job = job_pack(die)
+        if job is not None:
+            rules.packs.append(job)
     except (RulePackError, OSError) as e:
         res = error_result("load_profile", "deterministic", f"Could not load profile or rule packs: {e}")
         return {"status": "error", "profile": str(profile), "out_dir": str(out), "results": [res.to_dict()]}
@@ -64,6 +70,7 @@ def run_checks(
         out_dir=out,
         pdf_path=Path(pdf_path) if pdf_path else None,
         approved_render=Path(approved_render) if approved_render else None,
+        options={"fonts_dir": fonts_dir} if fonts_dir else {},
     )
     names = [n for n in prof.checks if only is None or n in only]
     results = [run_one(registry.get(n), ctx) for n in names]

@@ -43,6 +43,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--pdf", help="exported PDF for the export checks")
     r.add_argument("--brand-pack", help="brand pack YAML kept outside the repo")
     r.add_argument("--approved-render", help="approved PNG for render_regression")
+    r.add_argument("--die", help="this job's die size in inches, e.g. 10.25x2.5")
+    r.add_argument("--fonts-dir", help="folder with the label's fonts, for Scribus checks")
     r.add_argument("--out", help="folder for evidence crops (default: a temp folder)")
     r.add_argument("--check", action="append", help="run only this check (repeatable)")
     r.add_argument("--json", action="store_true", help="print the full JSON report")
@@ -64,7 +66,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     report = run_checks(
         a.sla, a.profile, pdf_path=a.pdf, brand_pack=a.brand_pack,
-        out_dir=a.out, approved_render=a.approved_render, only=a.check,
+        out_dir=a.out, approved_render=a.approved_render, only=a.check, fonts_dir=a.fonts_dir,
+        die=a.die,
     )
     if a.json:
         print(json.dumps(report, indent=2))

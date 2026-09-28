@@ -168,6 +168,7 @@ def test_check_rules_exist_in_shipped_or_test_packs():
     ids = set()
     for p in list((REPO / "rules").rglob("*.yaml")) + list((REPO / "tests/rules").rglob("*.yaml")):
         ids |= {r.id for r in load_pack(p).rules}
+    ids.add("die")  # the die is a job setting given at run time (job#die)
     for spec in registry.all_checks():
         for r in spec.rules:
             assert r in ids, (spec.name, r)
@@ -276,3 +277,27 @@ def test_pages_indexed(fx):
     assert len(doc.pages) == 2
     (f,) = doc.find("back_edge")
     assert f.page == 1 and round(f.x / 72, 6) == 0.02
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("10.25x2.5", (10.25, 2.5)), ("4 x 2.5 in", (4.0, 2.5)), ("3X2", (3.0, 2.0)),
+])
+def test_parse_die(text, expected):
+    from sla_preflight.rules import parse_die
+    assert parse_die(text) == expected
+
+
+@pytest.mark.parametrize("text", ["", "10.25", "axb", "0x2"])
+def test_parse_die_rejects(text):
+    from sla_preflight.rules import parse_die
+    with pytest.raises(RulePackError):
+        parse_die(text)
+
+
+def test_wizard_pack_verified_values():
+    pack = load_pack(REPO / "rules/printer/wizard_labels.yaml")
+    assert pack.by_id("die") is None  # die is per job now
+    for rid, key, value in (("safe_margin", "min_gap_in", 0.0625), ("bleed", "bleed_in", 0.0625),
+                            ("pdf_fonts", "fonts_outlined", True)):
+        r = pack.by_id(rid)
+        assert r.verified and r[key] == value and r.verified_by == "Darius"

@@ -4,11 +4,11 @@ from __future__ import annotations
 from ..context import Context
 from ..registry import check
 from ..result import CheckResult, Finding, finalize
-from ..scribus import text_overflows
+from ..scribus import layout_report
 from ..sla import pt_to_in
 from ._common import (
-    EPS_PT, box_in, page_label, printing_leaves, names_with_ancestry, overlap_pairs, r6,
-    schematic_crop,
+    EPS_PT, any_matches, bleed_patterns, box_in, label, matches, names_with_ancestry,
+    overlap_pairs, page_label, printing_leaves, r6, require_fonts, schematic_crop,
 )
 
 SIDES = ("left", "top", "right", "bottom")
@@ -17,13 +17,13 @@ SIDES = ("left", "top", "right", "bottom")
 @check(
     "page_matches_die",
     category="geometry",
-    description="Page size equals the printer's die; bleed is set in document settings, not baked into the page.",
-    rules=("die",),
+    description="Page size equals this job's die; document bleed equals the printer's bleed.",
+    rules=("die", "bleed"),
     explain=(
-        "Compares every page's width and height with the die size in the printer pack "
-        "(rule 'die': width_in, height_in, bleed_in, tolerance_in). Also checks that the "
-        "document bleed settings equal bleed_in on all four sides. A page that equals "
-        "die + 2 x bleed means bleed was baked into the page size."
+        "Compares every page's width and height with the job's die size, given at run time "
+        "(--die 10.25x2.5; rule job#die). Checks the document bleed settings equal the printer "
+        "pack's bleed.bleed_in on all four sides. A page that equals die + 2 x bleed means the "
+        "bleed was baked into the page size. Without --die only the bleed is checked."
     ),
     fix=(
         "Document Setup: set the page size to the die size exactly, and put the bleed "
@@ -32,16 +32,17 @@ SIDES = ("left", "top", "right", "bottom")
 )
 def page_matches_die(ctx: Context) -> CheckResult:
     doc = ctx.doc
-    rules = ctx.rules.all("die")
+    dies, bleeds = ctx.rules.all("die"), ctx.rules.all("bleed")
+    bleed_in = bleeds[0]["bleed_in"] if bleeds else None
     findings: list[Finding] = []
-    for rule in rules:
+    for rule in dies:
         w, h = rule["width_in"], rule["height_in"]
-        bleed = rule.get("bleed_in")
         tol = rule.get("tolerance_in", 0.001)
         for pg in doc.pages:
             pw, ph = pt_to_in(pg.width), pt_to_in(pg.height)
             if abs(pw - w) > tol or abs(ph - h) > tol:
-                baked = bleed is not None and abs(pw - (w + 2 * bleed)) <= tol and abs(ph - (h + 2 * bleed)) <= tol
+                baked = (bleed_in is not None and abs(pw - (w + 2 * bleed_in)) <= tol
+                         and abs(ph - (h + 2 * bleed_in)) <= tol)
                 findings.append(Finding.from_rule(
                     rule, page_label(pg.index),
                     measured={"width_in": r6(pw), "height_in": r6(ph)},
@@ -50,21 +51,22 @@ def page_matches_die(ctx: Context) -> CheckResult:
                              "and put the bleed in Document Setup > Bleeds."
                              if baked else "Page size differs from the die."),
                 ))
-        if bleed is not None:
-            sides = {k: r6(pt_to_in(v)) for k, v in doc.bleed.items()}
-            wrong = {k: v for k, v in sides.items() if abs(v - bleed) > tol}
-            if wrong:
-                findings.append(Finding.from_rule(
-                    rule, "document bleed",
-                    measured={f"bleed_{k}_in": v for k, v in sides.items()},
-                    threshold={"bleed_in": bleed, "tolerance_in": tol},
-                    message="Document bleed settings differ from the printer's bleed.",
-                ))
+    for rule in bleeds:
+        want, tol = rule["bleed_in"], rule.get("tolerance_in", 0.001)
+        sides = {k: r6(pt_to_in(v)) for k, v in doc.bleed.items()}
+        if any(abs(v - want) > tol for v in sides.values()):
+            findings.append(Finding.from_rule(
+                rule, "document bleed",
+                measured={f"bleed_{k}_in": v for k, v in sides.items()},
+                threshold={"bleed_in": want, "tolerance_in": tol},
+                message="Document bleed settings differ from the printer's bleed.",
+            ))
     n = len(findings)
+    ok = "Page size matches the die and document bleed is set." if dies else (
+        "Document bleed matches the printer; page size not checked (no die given, use --die).")
     return finalize(
-        "page_matches_die", "deterministic", findings, rules,
-        "Page size matches the die and document bleed is set.",
-        f"Page size or bleed does not match the die ({n} problem{'s' * (n != 1)}).",
+        "page_matches_die", "deterministic", findings, dies + bleeds, ok,
+        f"Page size or bleed does not match ({n} problem{'s' * (n != 1)}).",
     )
 
 
@@ -87,9 +89,9 @@ def trim_safety(ctx: Context) -> CheckResult:
     findings: list[Finding] = []
     for rule in rules:
         min_gap = rule["min_gap_in"]
-        allowed = set(rule.get("bleed_allowed", []) or [])
+        allowed = bleed_patterns(ctx, rule)
         for f in printing_leaves(doc):
-            if names_with_ancestry(f, doc) & allowed:
+            if any_matches(names_with_ancestry(f, doc), allowed):
                 continue
             pg = doc.pages[f.page]
             x0, y0, x1, y1 = f.ink_bbox()
@@ -98,15 +100,15 @@ def trim_safety(ctx: Context) -> CheckResult:
             if not short:
                 continue
             finding = Finding.from_rule(
-                rule, f.name or f"unnamed {f.kind}",
+                rule, label(f),
                 measured={**{f"gap_{k}_in": r6(pt_to_in(v)) for k, v in short.items()},
                           "page": f.page + 1, **({"master_page": f.master} if f.master else {})},
                 threshold={"min_gap_in": min_gap},
-                message=f"{f.name!r} is closer than {min_gap} in to trim on the "
+                message=f"{label(f)!r} is closer than {min_gap} in to trim on the "
                         + ", ".join(short) + " side" + ("s" if len(short) > 1 else "") + ".",
             )
             finding.evidence["crop"] = schematic_crop(
-                ctx, "trim_safety", f.name or "object", [f], safe_in=min_gap)
+                ctx, "trim_safety", label(f), [f], safe_in=min_gap)
             findings.append(finding)
     names = sorted({f.object for f in findings})
     return finalize(
@@ -133,10 +135,10 @@ def bleed_coverage(ctx: Context) -> CheckResult:
     rules = ctx.rules.all("safe_margin")
     findings: list[Finding] = []
     for rule in rules:
-        allowed = set(rule.get("bleed_allowed", []) or [])
+        allowed = bleed_patterns(ctx, rule)
         tol = rule.get("touch_tolerance_in", 0.001) * 72
         for f in printing_leaves(doc):
-            if not (names_with_ancestry(f, doc) & allowed):
+            if not any_matches(names_with_ancestry(f, doc), allowed):
                 continue
             pg = doc.pages[f.page]
             b = doc.bleed
@@ -153,13 +155,13 @@ def bleed_coverage(ctx: Context) -> CheckResult:
             if not short:
                 continue
             finding = Finding.from_rule(
-                rule, f.name,
+                rule, label(f),
                 measured={f"past_trim_{k}_in": r6(pt_to_in(p)) for k, (p, _) in short.items()},
                 threshold={f"bleed_{k}_in": r6(pt_to_in(n)) for k, (_, n) in short.items()},
-                message=f"{f.name!r} touches trim but stops short of the bleed edge on the "
+                message=f"{label(f)!r} touches trim but stops short of the bleed edge on the "
                         + ", ".join(short) + " side" + ("s" if len(short) > 1 else "") + ".",
             )
-            finding.evidence["crop"] = schematic_crop(ctx, "bleed_coverage", f.name, [f])
+            finding.evidence["crop"] = schematic_crop(ctx, "bleed_coverage", label(f), [f])
             findings.append(finding)
     names = sorted({f.object for f in findings})
     return finalize(
@@ -183,18 +185,25 @@ def bleed_coverage(ctx: Context) -> CheckResult:
 def frame_overflow(ctx: Context) -> CheckResult:
     doc = ctx.doc
     rules = ctx.rules.all("no_text_overflow")
-    over = text_overflows(ctx.sla_path, fonts_dir=ctx.options.get("fonts_dir"))
-    printing = {f.name: f for f in printing_leaves(doc) if f.is_text and f.name}
+    report = layout_report(ctx.sla_path, fonts_dir=ctx.options.get("fonts_dir"))
+    require_fonts(ctx, report["fonts"])
+    over = report["overflows"]
+    frames = {f.name: f for f in doc.all_frames() if f.is_text and f.name}
     findings: list[Finding] = []
     for rule in rules:
         for name, flag in sorted(over.items()):
-            if not flag or name not in printing:
+            if not flag:
                 continue
+            f = frames.get(name)
+            if f is not None and (f.page is None or not doc.layer_printable(f)):
+                continue  # does not print
             finding = Finding.from_rule(
                 rule, name, measured={"overflows": True}, threshold={"overflows": False},
-                message=f"Text in {name!r} does not fit its frame; the rest will not print.",
+                message=f"Text in {name!r} does not fit its frame; the rest will not print."
+                        + ("" if f else " (Scribus named this unnamed frame.)"),
             )
-            finding.evidence["crop"] = schematic_crop(ctx, "frame_overflow", name, [printing[name]])
+            if f is not None:
+                finding.evidence["crop"] = schematic_crop(ctx, "frame_overflow", name, [f])
             findings.append(finding)
     names = sorted({f.object for f in findings})
     return finalize(
@@ -226,14 +235,14 @@ def frame_overlap(ctx: Context) -> CheckResult:
         top, under, box = p["top"], p["under"], p["box"]
         w, h = pt_to_in(box[2] - box[0]), pt_to_in(box[3] - box[1])
         finding = Finding.from_rule(
-            rule, top.name,
-            measured={"other": under.name, "overlap_in": [r6(w), r6(h)],
+            rule, label(top),
+            measured={"other": label(under), "overlap_in": [r6(w), r6(h)],
                       "overlap_box_in": box_in(box)},
             threshold={"max_overlap_in": 0},
-            message=f"{top.name!r} overlaps {under.name!r} by {w:.3f} x {h:.3f} in.",
+            message=f"{label(top)!r} overlaps {label(under)!r} by {w:.3f} x {h:.3f} in.",
         )
         finding.evidence["crop"] = schematic_crop(
-            ctx, "frame_overlap", f"{top.name}__{under.name}", [top], [under], region=box)
+            ctx, "frame_overlap", f"{label(top)}__{label(under)}", [top], [under], region=box)
         findings.append(finding)
     pairs = [f"{f.object}/{f.measured['other']}" for f in findings]
     return finalize(
@@ -261,19 +270,19 @@ def min_type_size(ctx: Context) -> CheckResult:
     findings: list[Finding] = []
     for rule in rules:
         min_pt = rule["min_pt"]
-        scope = set(rule.get("frames") or [])
+        scope = rule.get("frames") or []
         for f in printing_leaves(doc):
-            if not f.is_text or (scope and f.name not in scope):
+            if not f.is_text or (scope and not matches(f.name, scope)):
                 continue
             for i, run in enumerate(f.runs):
                 if not run.text.strip() or run.size_pt >= min_pt - 1e-9:
                     continue
                 findings.append(Finding.from_rule(
-                    rule, f.name,
+                    rule, label(f),
                     measured={"size_pt": run.size_pt, "run": i, "text": run.text[:40],
                               "font": run.font},
                     threshold={"min_pt": min_pt},
-                    message=f"{run.size_pt:g} pt text in {f.name!r} is under {min_pt:g} pt.",
+                    message=f"{run.size_pt:g} pt text in {label(f)!r} is under {min_pt:g} pt.",
                 ))
     names = sorted({f.object for f in findings})
     return finalize(

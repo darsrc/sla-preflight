@@ -12,10 +12,8 @@ rules:
     verified: true
     verified_by: tests
     verified_on: 2026-09-28
-  - id: die
-    description: Page size equals the die.
-    width_in: 4.0
-    height_in: 2.5
+  - id: bleed
+    description: Document bleed on every side.
     bleed_in: 0.125
     tolerance_in: 0.001
     source: "Test fixture spec"

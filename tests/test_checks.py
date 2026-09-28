@@ -11,8 +11,9 @@ BRAND = "brand/example_brand.yaml"
 # (check, sla fixture, pdf fixture, expected status, objects named, rule ref)
 CASES = [
     ("page_matches_die", "good", None, "pass", None, None),
-    ("page_matches_die", "page_baked_bleed", None, "fail", {"page 1"}, f"{PRINTER}#die"),
-    ("page_matches_die", "page_wrong_size", None, "fail", {"page 1"}, f"{PRINTER}#die"),
+    ("page_matches_die", "page_baked_bleed", None, "fail", {"page 1"}, "job#die"),
+    ("page_matches_die", "page_baked_bleed", None, "fail", {"document bleed"}, f"{PRINTER}#bleed"),
+    ("page_matches_die", "page_wrong_size", None, "fail", {"page 1"}, "job#die"),
     ("trim_safety", "good", None, "pass", None, None),
     ("trim_safety", "trim_group_scaled_ok", None, "pass", None, None),
     ("trim_safety", "trim_manufacturer", None, "fail", {"manufacturer"}, f"{PRINTER}#safe_margin"),
@@ -79,7 +80,11 @@ def named(result):
     return out
 
 
+DIE = "4x2.5"  # the fixtures' die, given at run time like a real job
+
+
 def run_one(fx, check, sla, pdf=None, tmp_path=None, **kw):
+    kw.setdefault("die", DIE)
     rep = run_checks(fx["sla"][sla], "test_final", pdf_path=fx["pdf"][pdf] if pdf else None,
                      out_dir=tmp_path, only=[check], **kw)
     (res,) = rep["results"]
@@ -197,3 +202,50 @@ def test_confined_font_folder(fx, tmp_path):
     shutil.copy(src, fonts)
     assert text_overflows(fx["sla"]["text_overflow"], fonts_dir=fonts)["disclaimer"] is True
     assert render_png(fx["sla"]["good"], tmp_path / "r.png", dpi=72, fonts_dir=fonts).is_file()
+
+
+def test_page_matches_die_without_die_checks_bleed_only(fx, tmp_path):
+    res = run_one(fx, "page_matches_die", "good", tmp_path=tmp_path, die=None)
+    assert res["status"] == "pass" and "no die given" in res["summary"]
+    res = run_one(fx, "page_matches_die", "page_no_doc_bleed", tmp_path=tmp_path, die=None)
+    assert res["status"] == "fail"
+    assert {f["object"] for f in res["findings"]} == {"document bleed"}
+
+
+def test_wrong_die_fails(fx, tmp_path):
+    res = run_one(fx, "page_matches_die", "good", tmp_path=tmp_path, die="10.25x2.5")
+    assert res["status"] == "fail"
+    assert res["findings"][0]["rule"] == "job#die"
+    assert res["findings"][0]["rule_verified"] is True
+
+
+def test_bleed_objects_patterns_from_a_layout_pack(fx, tmp_path):
+    """Frame-name lists take wildcards, and a layout (brand) pack can name
+    its own bleed objects."""
+    res = run_one(fx, "trim_safety", "renamed_bleed", tmp_path=tmp_path)
+    assert res["status"] == "fail" and "Copy of bar_top" in named(res)
+    pack = tmp_path / "layout.yaml"
+    pack.write_text(
+        "kind: brand\nrules:\n"
+        "  - id: bleed_objects\n    description: Bleed objects in this layout.\n"
+        "    frames: ['Copy of *']\n    source: test\n    verified: true\n"
+        "    verified_by: tests\n    verified_on: 2026-09-28\n")
+    for check in ("trim_safety", "bleed_coverage"):
+        res = run_one(fx, check, "renamed_bleed", tmp_path=tmp_path, brand_pack=pack)
+        assert res["status"] == "pass", res
+
+
+def test_unnamed_frames_are_labelled_by_position(fx, tmp_path):
+    res = run_one(fx, "min_type_size", "unnamed_small_type", tmp_path=tmp_path)
+    assert res["status"] == "fail"
+    assert {f["object"] for f in res["findings"]} == {"unnamed text at (0.300, 1.760) in"}
+
+
+@requires_scribus
+@pytest.mark.parametrize("check", ["frame_overflow", "render_regression"])
+def test_scribus_checks_refuse_missing_fonts(fx, tmp_path, approved_render, check):
+    """Scribus silently substitutes missing fonts, which changes the layout;
+    the check must say so instead of reporting false overflow or changes."""
+    res = run_one(fx, check, "missing_font", tmp_path=tmp_path, approved_render=approved_render)
+    assert res["status"] == "error", res
+    assert "Nonexistent Sans Regular" in res["summary"]

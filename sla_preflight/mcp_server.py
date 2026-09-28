@@ -24,11 +24,13 @@ def run_checks(
     profile: str,
     pdf_path: str | None = None,
     brand_pack: str | None = None,
+    die: str | None = None,
 ) -> dict[str, Any]:
     """Run a profile's checks on a Scribus .sla file (and its exported PDF).
+    die: this job's die size in inches, e.g. "10.25x2.5" (optional).
     Returns overall status (pass/warn/fail/error) and one result per check,
     each with a one-sentence summary you can relay verbatim."""
-    return api.run_checks(sla_path, profile, pdf_path=pdf_path, brand_pack=brand_pack)
+    return api.run_checks(sla_path, profile, pdf_path=pdf_path, brand_pack=brand_pack, die=die)
 
 
 @mcp.tool()

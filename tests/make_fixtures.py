@@ -44,6 +44,7 @@ class Obj:
     page: int = 0
     para_style: str | None = None  # paragraph style; text sizes of None come from it
     link_to: str | None = None  # name of the next frame in a linked text chain
+    font: str = FONT
 
 
 @dataclass
@@ -165,7 +166,7 @@ def _object_el(o: Obj, label: Label, ids: dict[str, int], linked_to: set[str],
             lsp["PARENT"] = o.para_style
         ET.SubElement(st, "DefaultStyle", lsp)
         for i, (para, size) in enumerate(o.text):
-            run = {"FONT": FONT, "CH": para}
+            run = {"FONT": o.font, "CH": para}
             if size is not None:
                 run["FONTSIZE"] = f"{float(size):g}"
             ET.SubElement(st, "ITEXT", run)
@@ -451,6 +452,22 @@ def _linked_overflow(l: Label):
     _linked(l, "Made for Example Co., 1 Example Way, Sample City. " * 6)
 
 
+def _renamed_bleed(l: Label):
+    # a real layout's names: the bleed objects are copies with other names
+    for n in ("bg_band", "bar_top", "bar_bottom", "lot_box"):
+        l.get(n).name = f"Copy of {n}"
+
+
+def _unnamed_small_type(l: Label):
+    d = l.get("disclaimer")
+    d.name = ""
+    d.text = [(t, 4.5) for t, _ in d.text]
+
+
+def _missing_font(l: Label):
+    l.get("disclaimer").font = "Nonexistent Sans Regular"
+
+
 def _render_moved(l: Label):
     l.get("lot_text").x += 0.10
 
@@ -477,6 +494,9 @@ SLA_FIXTURES = {
     "claim_no_disclaimer": _claim_no_disclaimer,
     "no_claim_no_disclaimer": _no_claim_no_disclaimer,
     "render_moved": _render_moved,
+    "renamed_bleed": _renamed_bleed,
+    "unnamed_small_type": _unnamed_small_type,
+    "missing_font": _missing_font,
     "style_small_type": _style_small_type,
     "style_ok_type": _style_ok_type,
     "rotated_ok": _rotated_ok,

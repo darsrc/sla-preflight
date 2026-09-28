@@ -1,14 +1,14 @@
 # Printer pack: Wizard Labels (public example).
-# Confirmed: safe_margin, required lot_box, bleed present in the PDF, CMYK.
-# The die size, bleed amount and font outlining hold placeholder values and
-# stay verified: false (results are advisory `warn`) until someone confirms
-# them against the printer's own artwork spec.
+# Confirmed: safe margin, bleed, outlined fonts (prepress email), required
+# lot_box, bleed present in the PDF, CMYK only.
+# The die size is per job, not per printer: pass it at run time
+# (sla-preflight run ... --die 10.25x2.5).
 pack: printer/wizard_labels.yaml
 kind: printer
 description: Artwork requirements for Wizard Labels roll labels.
 rules:
   - id: safe_margin
-    description: All non-bleed content at least this far inside trim.
+    description: All non-bleed content at least this far inside the die line (trim).
     min_gap_in: 0.0625
     bleed_allowed: [bg_band, bar_top, bar_bottom, lot_box]
     source: "Wizard Labels prepress email, 2026-06-04"
@@ -16,14 +16,22 @@ rules:
     verified_by: Darius
     verified_on: 2026-09-28
 
-  - id: die
-    description: Page size equals the die; bleed set in document bleed settings.
-    width_in: 3.0      # PLACEHOLDER - replace with the die for the job
-    height_in: 2.0     # PLACEHOLDER
-    bleed_in: 0.125    # PLACEHOLDER
+  - id: bleed
+    description: Document bleed on every side.
+    bleed_in: 0.0625
     tolerance_in: 0.001
-    source: "PLACEHOLDER - confirm against the printer's die line for the job"
-    verified: false
+    source: "Wizard Labels prepress email, 2026-06-04"
+    verified: true
+    verified_by: Darius
+    verified_on: 2026-09-28
+
+  - id: pdf_fonts
+    description: The final PDF has no live fonts; all text outlined.
+    fonts_outlined: true
+    source: "Wizard Labels prepress email, 2026-06-04"
+    verified: true
+    verified_by: Darius
+    verified_on: 2026-09-28
 
   - id: required_elements
     description: The lot/expiration area is always present and printing; never omitted.
@@ -49,9 +57,3 @@ rules:
     verified: true
     verified_by: repo owner
     verified_on: 2026-09-28
-
-  - id: pdf_fonts
-    description: The final PDF has no live fonts; all text outlined.
-    fonts_outlined: true   # PLACEHOLDER
-    source: "PLACEHOLDER - confirm against the printer's PDF export requirements"
-    verified: false

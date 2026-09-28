@@ -39,6 +39,12 @@ Python 3.11+, and Scribus 1.6 for the two checks that need real text layout or
 rendering (`frame_overflow`, `render_regression`). Without a display, Scribus
 runs under `xvfb-run` automatically.
 
+Those two checks need **the label's own fonts**. Scribus silently substitutes
+missing fonts, which changes line breaks and makes overflow results wrong, so
+both checks return `error` and name the missing fonts instead of guessing.
+Install the fonts, or pass a folder holding them with `--fonts-dir` (or
+`$SLA_PREFLIGHT_FONTS_DIR`).
+
 ```bash
 sudo apt-get install scribus xvfb      # Debian/Ubuntu
 pip install -e ".[test]"
@@ -47,7 +53,7 @@ pip install -e ".[test]"
 ## Use
 
 ```bash
-sla-preflight run label.sla --profile print_label_final --pdf label.pdf
+sla-preflight run label.sla --profile print_label_final --pdf label.pdf --die 10.25x2.5
 sla-preflight run label.sla --profile draft_review --brand-pack ~/private/packs/client.yaml
 sla-preflight run label.sla --profile print_label_final --json      # full report
 sla-preflight list [--profile print_label_final]
@@ -57,7 +63,9 @@ sla-preflight explain trim_safety
 Exit codes: `0` pass, `1` warn, `2` fail, `3` error. Evidence images are
 written to `--out` (default: a temporary folder named in the report).
 
-Options for `run`: `--pdf`, `--brand-pack` (replaces the profile's brand pack),
+Options for `run`: `--pdf`, `--die WxH` (this job's die size in inches; the die
+is per job, not per printer), `--fonts-dir`, `--brand-pack` (replaces the
+profile's brand pack),
 `--approved-render` (PNG for `render_regression`), `--out`, `--check NAME`
 (repeatable, run only these), `--json`.
 
@@ -65,9 +73,9 @@ Options for `run`: `--pdf`, `--brand-pack` (replaces the profile's brand pack),
 
 | Check | Reads | Rule id(s) |
 |---|---|---|
-| `page_matches_die` | .sla | `die` |
-| `trim_safety` | .sla | `safe_margin` |
-| `bleed_coverage` | .sla | `safe_margin` (`bleed_allowed`) |
+| `page_matches_die` | .sla | `die` (job, from `--die`), `bleed` |
+| `trim_safety` | .sla | `safe_margin` (+ `bleed_objects`) |
+| `bleed_coverage` | .sla | `safe_margin` (`bleed_allowed`, + `bleed_objects`) |
 | `frame_overflow` | .sla via Scribus | `no_text_overflow` |
 | `frame_overlap` | .sla | `no_frame_overlap` (+ `required_elements`) |
 | `min_type_size` | .sla | `min_type_size` |
@@ -173,6 +181,11 @@ rules:
     verified_on: 2026-09-28
 ```
 
+Frame-name lists (`bleed_allowed`, `bleed_objects`, `frames`, `containers`,
+`ignore`) accept shell wildcards: `Copy of bar_*`, `*background*`. A name also
+matches every object inside a group of that name. Frames without a name are
+reported by position, e.g. `unnamed text at (0.174, 1.983) in in group Group40`.
+
 Rules are cited as `<pack>#<id>`. A check uses every loaded rule with its id,
 so a brand pack and a regulatory pack can both require frames. The pack
 loader refuses a rule with no source, a non-boolean `verified`, or
@@ -182,8 +195,10 @@ Parameters per rule id:
 
 | Rule id | Parameters |
 |---|---|
-| `die` | `width_in`, `height_in`, `bleed_in`, `tolerance_in` |
+| `die` | not in packs: given per job with `--die WxH`, cited as `job#die` |
+| `bleed` | `bleed_in`, `tolerance_in` |
 | `safe_margin` | `min_gap_in`, `bleed_allowed` (frame names), `touch_tolerance_in` |
+| `bleed_objects` | `frames`: a layout pack's own objects allowed to bleed (added to `bleed_allowed`) |
 | `pdf_bleed` | `required`, `tolerance_in` |
 | `pdf_fonts` | `fonts_outlined` |
 | `pdf_color` | `color_space` (`CMYK`) |
@@ -222,9 +237,9 @@ paraphrase law into a pack.
 with exactly three tools:
 
 - `list_checks(profile=None)`: names, kind and one-line description.
-- `run_checks(sla_path, profile, pdf_path=None, brand_pack=None)`: runs the
-  profile, writes evidence crops to an output folder, returns the results
-  plus an overall status.
+- `run_checks(sla_path, profile, pdf_path=None, brand_pack=None, die=None)`:
+  runs the profile, writes evidence crops to an output folder, returns the
+  results plus an overall status. `die` is the job's die size, e.g. `"10.25x2.5"`.
 - `explain(check)`: what it checks, which rules it reads, how to fix a failure.
 
 Example client entry:

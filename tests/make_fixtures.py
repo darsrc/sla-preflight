@@ -294,6 +294,17 @@ def _missing_manufacturer(l: Label):
     l.remove("manufacturer")
 
 
+def _missing_lot_box(l: Label):
+    # the lot/expiration area is required, never omitted
+    l.remove("lot_box")
+    l.remove("lot_text")
+
+
+def _page_no_doc_bleed(l: Label):
+    # document bleed settings left at zero
+    l.bleed = 0.0
+
+
 def _manufacturer_hidden_layer(l: Label):
     l.layers.append(("Notes", False))
     l.get("manufacturer").layer = 1
@@ -332,6 +343,8 @@ SLA_FIXTURES = {
     "text_overlap": _overlap_text,
     "missing_manufacturer": _missing_manufacturer,
     "manufacturer_hidden_layer": _manufacturer_hidden_layer,
+    "missing_lot_box": _missing_lot_box,
+    "page_no_doc_bleed": _page_no_doc_bleed,
     "manufacturer_empty": _manufacturer_empty,
     "claim_no_disclaimer": _claim_no_disclaimer,
     "no_claim_no_disclaimer": _no_claim_no_disclaimer,

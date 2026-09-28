@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Safety check (private patterns come from a repository secret)
+        env:
+          SLA_PREFLIGHT_SAFETY_PATTERNS: ${{ secrets.SAFETY_PATTERNS }}
+        run: python scripts/safety_check.py
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Scribus and xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends scribus xvfb xauth fonts-dejavu-core
+      - run: pip install -e ".[test]"
+      - name: Tests (headless, under xvfb-run)
+        run: xvfb-run -a python -m pytest -q

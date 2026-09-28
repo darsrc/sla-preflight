@@ -1,5 +1,6 @@
 # Printer pack: Wizard Labels (public example).
-# Only safe_margin is confirmed. The other rules hold placeholder values and
+# Confirmed: safe_margin, required lot_box, bleed present in the PDF, CMYK.
+# The die size, bleed amount and font outlining hold placeholder values and
 # stay verified: false (results are advisory `warn`) until someone confirms
 # them against the printer's own artwork spec.
 pack: printer/wizard_labels.yaml
@@ -24,11 +25,33 @@ rules:
     source: "PLACEHOLDER - confirm against the printer's die line for the job"
     verified: false
 
-  - id: pdf_export
-    description: Final PDF has bleed, outlined fonts, and CMYK-only colour.
-    bleed_in: 0.125        # PLACEHOLDER
+  - id: required_elements
+    description: The lot/expiration area is always present and printing; never omitted.
+    frames: [lot_box]
+    source: "Owner confirmation: lot_box is the lot/expiration area, REQUIRED (spec criterion 6)"
+    verified: true
+    verified_by: repo owner
+    verified_on: 2026-09-28
+
+  - id: pdf_bleed
+    description: The final PDF includes the document bleed on every side (print-ready).
+    required: true
     tolerance_in: 0.001
+    source: "Owner confirmation: final PDFs must be print-ready, 2026-09-28"
+    verified: true
+    verified_by: repo owner
+    verified_on: 2026-09-28
+
+  - id: pdf_color
+    description: The final PDF uses CMYK only; no RGB content.
+    color_space: CMYK
+    source: "Owner confirmation: CMYK / print-ready required, 2026-09-28"
+    verified: true
+    verified_by: repo owner
+    verified_on: 2026-09-28
+
+  - id: pdf_fonts
+    description: The final PDF has no live fonts; all text outlined.
     fonts_outlined: true   # PLACEHOLDER
-    color_space: CMYK      # PLACEHOLDER
     source: "PLACEHOLDER - confirm against the printer's PDF export requirements"
     verified: false

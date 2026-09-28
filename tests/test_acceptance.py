@@ -29,7 +29,7 @@ def test_defect_pdf_without_bleed(fx, tmp_path):
                      out_dir=tmp_path, only=["pdf_page_box"])
     assert rep["status"] == "fail"
     res = failing(rep, "pdf_page_box")
-    assert res["findings"][0]["rule"] == f"{PRINTER}#pdf_export"
+    assert res["findings"][0]["rule"] == f"{PRINTER}#pdf_bleed"
 
 
 def test_defect_facts_overprint_manufacturer(fx, tmp_path):

@@ -22,11 +22,30 @@ rules:
     verified: true
     verified_by: tests
     verified_on: 2026-09-28
-  - id: pdf_export
-    description: Final PDF has bleed, outlined fonts, CMYK only.
-    bleed_in: 0.125
+  - id: required_elements
+    description: Lot area required.
+    frames: [lot_box]
+    source: "Test fixture spec"
+    verified: true
+    verified_by: tests
+    verified_on: 2026-09-28
+  - id: pdf_bleed
+    description: PDF includes bleed.
+    required: true
     tolerance_in: 0.001
+    source: "Test fixture spec"
+    verified: true
+    verified_by: tests
+    verified_on: 2026-09-28
+  - id: pdf_fonts
+    description: No live fonts.
     fonts_outlined: true
+    source: "Test fixture spec"
+    verified: true
+    verified_by: tests
+    verified_on: 2026-09-28
+  - id: pdf_color
+    description: CMYK only.
     color_space: CMYK
     source: "Test fixture spec"
     verified: true

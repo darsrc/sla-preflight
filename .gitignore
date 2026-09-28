@@ -11,3 +11,9 @@ clients/
 
 # build spec stays local, out of the public repo
 preflight-spec.md
+# private safety patterns (client names etc.), one regex per line
+.safety-patterns
+# artwork and client files never enter this repo; fixtures are generated
+*.sla
+*.sla.gz
+*.pdf

@@ -1,0 +1,42 @@
+# Test-only layout rules (synthetic names and values), all verified so the
+# new checks return real pass/fail against the fixtures.
+pack: brand/test_layout.yaml
+kind: brand
+description: Synthetic layout rules for tests.
+rules:
+  - id: min_type_size.per_frame
+    description: Per-frame minimum sizes.
+    per_frame: {serving_info: 7}
+    source: "Test fixture spec"
+    verified: true
+    verified_by: tests
+    verified_on: 2026-09-29
+  - id: min_x_height
+    description: x-height of the disclaimer.
+    frames: [disclaimer]
+    min_in: 0.04
+    glyph: o
+    source: "Test fixture spec"
+    verified: true
+    verified_by: tests
+    verified_on: 2026-09-29
+  - id: element_placement
+    description: Other ingredients right under or right of the facts panel.
+    frame: other_ingredients
+    panel: [facts_box, supplement_facts]
+    positions: [below, right]
+    max_gap_in: 0.125
+    source: "Test fixture spec"
+    verified: true
+    verified_by: tests
+    verified_on: 2026-09-29
+  - id: facts_row_separators
+    description: Hairlines between facts rows, or dot leaders.
+    rows_frames: ["fact_row_*", fact_rows_block]
+    dot_leaders_allowed: true
+    max_rule_height_in: 0.02
+    min_span_fraction: 0.8
+    source: "Test fixture spec"
+    verified: true
+    verified_by: tests
+    verified_on: 2026-09-29

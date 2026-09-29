@@ -85,6 +85,9 @@ profile's brand pack),
 | `required_elements` | .sla | `required_elements` (+ `no_frame_overlap`) |
 | `facts_math` | .sla text | `facts_math` |
 | `claim_disclaimer_pairing` | .sla text | `claim_disclaimer` |
+| `element_placement` | .sla | `element_placement` |
+| `facts_row_separators` | .sla | `facts_row_separators` |
+| `min_x_height` | .sla + font files via Scribus | `min_x_height` |
 | `render_regression` | .sla via Scribus + approved PNG | `render_regression` |
 
 `sla-preflight explain <check>` says what each one checks, which rules it
@@ -197,6 +200,18 @@ exact value, only the rounding is in question and the `facts_about_rounding`
 rule judges it (and is cited); a larger difference, or no rounding rule, fails
 under `facts_math`.
 
+A rule id may carry a suffix after a dot (`min_type_size.facts`,
+`min_type_size.other`): a check reads every rule whose id is its rule id or
+starts with it plus a dot, so one pack can hold several rules for the same
+check, each with its own source and verified status.
+
+`min_x_height` measures the reference glyph's outline (overshoot included) in
+the very font file Scribus renders the run with, so it needs Scribus and the
+label's fonts. `facts_row_separators` counts a non-text shape as a hairline
+when it is thinner than `max_rule_height_in` and spans most of the rows'
+width; dot leaders are a tab with a `.` leader in the paragraph style, or
+`...`/`…` in the text.
+
 Rules are cited as `<pack>#<id>`. A check uses every loaded rule with its id,
 so a brand pack and a regulatory pack can both require frames. The pack
 loader refuses a rule with no source, a non-boolean `verified`, or
@@ -217,7 +232,10 @@ Parameters per rule id:
 | `pdf_color` | `color_space` (`CMYK`) |
 | `no_text_overflow` | none |
 | `no_frame_overlap` | `containers` (`[outer, inner]` pairs allowed to overlap), `ignore` |
-| `min_type_size` | `min_pt`, optional `frames` to limit scope |
+| `min_type_size` | `min_pt` (optionally limited to `frames`) and/or `per_frame` (`{frame: pt}`) |
+| `min_x_height` | `frames`, `min_in`, `glyph` (default `o`): ink height of the glyph from the font file x size x vertical scale |
+| `element_placement` | `frame`, `panel` (frames whose union is the panel box), `positions` (`below`, `right`), `max_gap_in` |
+| `facts_row_separators` | `rows_frames` (one row per frame, or paragraphs of a single frame), `dot_leaders_allowed`, `max_rule_height_in`, `min_span_fraction` |
 | `required_elements` | `frames` |
 | `facts_math` | `count_frame`, `serving_frame`, `count_pattern`, `serving_size_pattern`, `servings_pattern`, `about_pattern` (regexes; the first matching group is used, so one pattern can cover unit counts and grams) |
 | `claim_disclaimer` | `claim_frames`, `disclaimer_frame` |

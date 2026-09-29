@@ -11,10 +11,13 @@ checks:
   - frame_overflow
   - frame_overlap
   - min_type_size
+  - min_x_height
   - pdf_page_box
   - pdf_fonts_outlined
   - pdf_color_space
   - required_elements
   - facts_math
   - claim_disclaimer_pairing
+  - element_placement
+  - facts_row_separators
   - render_regression

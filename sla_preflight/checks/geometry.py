@@ -259,20 +259,31 @@ def frame_overlap(ctx: Context) -> CheckResult:
     rules=("min_type_size",),
     explain=(
         "Resolves the font size of every text run (character, paragraph style and document "
-        "defaults) and reports each run below min_type_size.min_pt with frame name and size. "
-        "A rule may limit itself to certain frames with 'frames'."
+        "defaults) and reports each run below the minimum with frame name and size. A rule "
+        "sets min_pt for every frame (or only the frames in 'frames'), and/or per_frame "
+        "minimums ({frame: pt}, wildcards and aliases allowed); a frame named in per_frame "
+        "uses that value instead of min_pt."
     ),
-    fix="Raise the reported runs to at least min_pt, making room by resizing the frame or trimming text.",
+    fix="Raise the reported runs to at least the minimum, making room by resizing the frame or trimming text.",
 )
 def min_type_size(ctx: Context) -> CheckResult:
     doc = ctx.doc
     rules = ctx.rules.all("min_type_size")
     findings: list[Finding] = []
     for rule in rules:
-        min_pt = rule["min_pt"]
+        default = rule.get("min_pt")
         scope = with_aliases(ctx, rule.get("frames") or [])
+        per_frame = [(with_aliases(ctx, [k]), float(v))
+                     for k, v in (rule.get("per_frame") or {}).items()]
         for f in printing_leaves(doc):
-            if not f.is_text or (scope and not matches(f.name, scope)):
+            if not f.is_text:
+                continue
+            specific = [v for names, v in per_frame if matches(f.name, names)]
+            if specific:
+                min_pt = max(specific)
+            elif default is not None and (not scope or matches(f.name, scope)):
+                min_pt = float(default)
+            else:
                 continue
             for i, run in enumerate(f.runs):
                 if not run.text.strip() or run.size_pt >= min_pt - 1e-9:

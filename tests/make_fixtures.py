@@ -45,6 +45,7 @@ class Obj:
     para_style: str | None = None  # paragraph style; text sizes of None come from it
     link_to: str | None = None  # name of the next frame in a linked text chain
     font: str = FONT
+    scale_v: float | None = None  # vertical character scaling, percent
 
 
 @dataclass
@@ -55,8 +56,8 @@ class Label:
     objects: list[Obj] = field(default_factory=list)
     layers: list[tuple[str, bool]] = field(default_factory=lambda: [("Background", True)])
     pages: int = 1
-    # extra STYLE / CHARSTYLE elements: (tag, attributes)
-    styles: list[tuple[str, dict]] = field(default_factory=list)
+    # extra STYLE / CHARSTYLE elements: (tag, attributes[, [(child tag, attributes)]])
+    styles: list[tuple] = field(default_factory=list)
     masters: dict[str, list[Obj]] = field(default_factory=dict)
     page_master: dict[int, str] = field(default_factory=dict)  # page -> master name
 
@@ -166,10 +167,15 @@ def _object_el(o: Obj, label: Label, ids: dict[str, int], linked_to: set[str],
             lsp["PARENT"] = o.para_style
         ET.SubElement(st, "DefaultStyle", lsp)
         for i, (para, size) in enumerate(o.text):
-            run = {"FONT": o.font, "CH": para}
-            if size is not None:
-                run["FONTSIZE"] = f"{float(size):g}"
-            ET.SubElement(st, "ITEXT", run)
+            for j, piece in enumerate(para.split("\t")):
+                if j:
+                    ET.SubElement(st, "tab")  # Scribus stores a tab as its own element
+                run = {"FONT": o.font, "CH": piece}
+                if size is not None:
+                    run["FONTSIZE"] = f"{float(size):g}"
+                if o.scale_v is not None:
+                    run["SCALEV"] = f"{o.scale_v:g}"
+                ET.SubElement(st, "ITEXT", run)
             ET.SubElement(st, "trail" if i == len(o.text) - 1 else "para", lsp)
         if not o.text:
             ET.SubElement(st, "trail")
@@ -199,8 +205,10 @@ def write_sla(label: Label, path: Path) -> Path:
     ))
     for name, c, m, y, k in (("Black", 0, 0, 0, 100), ("White", 0, 0, 0, 0)):
         ET.SubElement(doc, "COLOR", _attrs(NAME=name, SPACE="CMYK", C=c, M=m, Y=y, K=k))
-    for tag, attrs in label.styles:
-        ET.SubElement(doc, tag, {k: str(v) for k, v in attrs.items()})
+    for tag, attrs, *children in label.styles:
+        st = ET.SubElement(doc, tag, {k: str(v) for k, v in attrs.items()})
+        for ctag, cattrs in (children[0] if children else []):
+            ET.SubElement(st, ctag, {k: str(v) for k, v in cattrs.items()})
     for i, (name, prints) in enumerate(label.layers):
         ET.SubElement(doc, "LAYERS", _attrs(
             NUMMER=i, LEVEL=i, NAME=name, SICHTBAR=1, DRUCKEN=int(prints), EDIT=1,
@@ -483,6 +491,50 @@ def _template_names(l: Label):
     l.get("supplement_facts").name = "facts_rows"
 
 
+def _serving_small(l: Label):
+    # 6.5 pt passes the 6 pt global minimum but not serving_info's own 7 pt
+    l.get("serving_info").text = [(t, 6.5) for t, _ in l.get("serving_info").text]
+
+
+def _xheight_scaled(l: Label):
+    # 6 pt, but squashed to 70 % height: the x-height shrinks with it
+    l.get("disclaimer").scale_v = 70.0
+
+
+def _placed(x, y, w, h):
+    def fn(l: Label):
+        l.objects.append(text("other_ingredients", x, y, w, h, "Other ingredients: placeholder.", size=6))
+    return fn
+
+
+ROW_Y = (0.80, 0.95, 1.10)
+ROWS = ("Nutrient A", "Nutrient B", "Nutrient C")
+
+
+def _hairline(y):
+    return shape(f"hairline_{y:g}", 2.35, y, 1.30, 0.005, fill="Black")
+
+
+def _rows_frames(n_lines):
+    def fn(l: Label):
+        l.objects += [text(f"fact_row_{i + 1}", 2.35, y, 1.30, 0.12, f"{r} 10 mg", size=6)
+                      for i, (y, r) in enumerate(zip(ROW_Y, ROWS))]
+        l.objects += [_hairline(y) for y in (0.925, 1.075)[:n_lines]]
+    return fn
+
+
+def _rows_block(n_lines=0, rows=None, leader_style=False):
+    def fn(l: Label):
+        block = text("fact_rows_block", 2.35, 0.80, 1.30, 0.42, *(rows or [f"{r} 10 mg" for r in ROWS]),
+                     size=6)
+        if leader_style:
+            l.styles.append(("STYLE", {"NAME": "leaders"}, [("Tabs", {"Type": 1, "Pos": 80, "Fill": "."})]))
+            block.para_style = "leaders"
+        l.objects.append(block)
+        l.objects += [_hairline(y) for y in (0.93, 1.07)[:n_lines]]
+    return fn
+
+
 def _render_moved(l: Label):
     l.get("lot_text").x += 0.10
 
@@ -509,6 +561,19 @@ SLA_FIXTURES = {
     "claim_no_disclaimer": _claim_no_disclaimer,
     "no_claim_no_disclaimer": _no_claim_no_disclaimer,
     "render_moved": _render_moved,
+    "serving_small": _serving_small,
+    "xheight_scaled": _xheight_scaled,
+    "placement_below": _placed(2.30, 2.16, 1.40, 0.06),   # 0.01 in under the panel
+    "placement_right": _placed(3.72, 1.00, 0.20, 0.50),   # 0.02 in right of the panel
+    "placement_away": _placed(0.30, 2.16, 1.00, 0.06),    # below, but not under the panel
+    "placement_gap": _placed(2.30, 2.40, 1.40, 0.06),     # under the panel, 0.25 in away
+    "rows_hairlines": _rows_frames(2),
+    "rows_missing_hairline": _rows_frames(1),
+    "rows_block_hairlines": _rows_block(2),
+    "rows_block_none": _rows_block(0),
+    "rows_block_tab_leaders": _rows_block(0, [f"{r}\t10 mg" for r in ROWS], leader_style=True),
+    "rows_block_plain_tabs": _rows_block(0, [f"{r}\t10 mg" for r in ROWS]),
+    "rows_block_literal_dots": _rows_block(0, [f"{r} ........ 10 mg" for r in ROWS]),
     "template_names": _template_names,
     # 454 g / 15 g = 30.27 servings
     "facts_gel_about_30": _gel("About 30"),

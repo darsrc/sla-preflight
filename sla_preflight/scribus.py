@@ -88,6 +88,12 @@ def available_fonts(timeout: float = 120, fonts_dir: str | Path | None = None) -
     return run_script(body, timeout, fonts_dir)["fonts"]
 
 
+def font_files(timeout: float = 120, fonts_dir: str | Path | None = None) -> dict[str, str]:
+    """Scribus font name -> the font file Scribus renders it with."""
+    body = 'RESULT["files"] = {f[0]: f[5] for f in scribus.getXFontNames()}'
+    return run_script(body, timeout, fonts_dir)["files"]
+
+
 def text_overflows(sla_path: str | Path, timeout: float = 120,
                    fonts_dir: str | Path | None = None) -> dict[str, bool]:
     """Map each text frame's name to whether its text overflows. Groups are

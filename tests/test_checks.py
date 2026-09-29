@@ -61,6 +61,22 @@ CASES = [
     ("trim_safety", "master_note_near_trim", None, "fail", {"master_note"}, f"{PRINTER}#safe_margin"),
     ("required_elements", "manufacturer_on_master", None, "pass", None, None),
     ("bleed_coverage", "manufacturer_on_master", None, "pass", None, None),
+    # per-frame minimum sizes (test_layout pack: serving_info >= 7 pt)
+    ("min_type_size", "serving_small", None, "fail", {"serving_info"}, "brand/test_layout.yaml#min_type_size.per_frame"),
+    # placement immediately below / right of the facts panel
+    ("element_placement", "placement_below", None, "pass", None, None),
+    ("element_placement", "placement_right", None, "pass", None, None),
+    ("element_placement", "placement_away", None, "fail", {"other_ingredients"}, "brand/test_layout.yaml#element_placement"),
+    ("element_placement", "placement_gap", None, "fail", {"other_ingredients"}, "brand/test_layout.yaml#element_placement"),
+    # hairlines between facts rows, or dot leaders
+    ("facts_row_separators", "rows_hairlines", None, "pass", None, None),
+    ("facts_row_separators", "rows_missing_hairline", None, "fail", {"fact_row_1, fact_row_2, fact_row_3"},
+     "brand/test_layout.yaml#facts_row_separators"),
+    ("facts_row_separators", "rows_block_hairlines", None, "pass", None, None),
+    ("facts_row_separators", "rows_block_none", None, "fail", {"fact_rows_block"}, "brand/test_layout.yaml#facts_row_separators"),
+    ("facts_row_separators", "rows_block_tab_leaders", None, "pass", None, None),
+    ("facts_row_separators", "rows_block_literal_dots", None, "pass", None, None),
+    ("facts_row_separators", "rows_block_plain_tabs", None, "fail", {"fact_rows_block"}, "brand/test_layout.yaml#facts_row_separators"),
     # a required frame that continues a linked text chain is not empty
     ("required_elements", "linked_manufacturer", None, "pass", None, None),
     ("frame_overlap", "linked_manufacturer", None, "pass", None, None),
@@ -312,3 +328,41 @@ def test_frame_aliases_map_other_packs_names(fx, tmp_path):
                      brand_pack=pack, only=["required_elements"])
     objs = {f["object"] for f in rep["results"][0]["findings"] if f.get("measured", {}).get("problem")}
     assert "manufacturer" in objs
+
+
+@requires_scribus
+@pytest.mark.parametrize("sla,status,sizes", [
+    ("good", "pass", None),
+    ("small_type", "fail", [4.5, 5.0]),      # 4.5 and 5 pt DejaVu Sans: o under 0.04 in
+    ("xheight_scaled", "fail", [6.0]),       # 6 pt squashed to 70 %
+])
+def test_min_x_height(fx, tmp_path, sla, status, sizes):
+    res = run_one(fx, "min_x_height", sla, tmp_path=tmp_path)
+    assert_result(res, status, {"disclaimer"} if sizes else None, "brand/test_layout.yaml#min_x_height")
+    if sizes:
+        assert sorted(f["measured"]["size_pt"] for f in res["findings"]) == sizes
+        for f in res["findings"]:
+            assert f["measured"]["x_height_in"] < 0.04 and f["measured"]["glyph"] == "o"
+
+
+@requires_scribus
+def test_x_height_matches_the_font_outline(fx, tmp_path):
+    """The measured height comes from the font file: DejaVu Sans 'o' ink
+    height is 1147 + 29 = 1176 units of 2048 per em (overshoot included)."""
+    from sla_preflight.checks.layout import glyph_height
+
+    em, y0, y1 = glyph_height("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "o")
+    assert round(em * 2048) == 1176 and round(y0 * 2048) == -29
+    res = run_one(fx, "min_x_height", "small_type", tmp_path=tmp_path)
+    f45 = [f for f in res["findings"] if f["measured"]["size_pt"] == 4.5][0]
+    assert f45["measured"]["x_height_in"] == pytest.approx(1176 / 2048 * 4.5 / 72, abs=1e-6)
+
+
+def test_dot_leaders_only_when_allowed(fx, tmp_path):
+    pack = tmp_path / "strict.yaml"
+    pack.write_text(
+        "kind: brand\nrules:\n  - id: facts_row_separators\n    description: hairlines only\n"
+        "    rows_frames: [fact_rows_block]\n    dot_leaders_allowed: false\n"
+        "    source: test\n    verified: true\n    verified_by: tests\n    verified_on: 2026-09-29\n")
+    res = run_one(fx, "facts_row_separators", "rows_block_tab_leaders", tmp_path=tmp_path, brand_pack=pack)
+    assert res["status"] == "fail"

@@ -13,3 +13,5 @@ checks:
   - required_elements
   - facts_math
   - claim_disclaimer_pairing
+  - element_placement
+  - facts_row_separators

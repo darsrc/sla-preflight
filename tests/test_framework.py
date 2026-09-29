@@ -16,7 +16,8 @@ REPO = Path(__file__).resolve().parent.parent
 V01 = [
     "page_matches_die", "trim_safety", "bleed_coverage", "frame_overflow", "frame_overlap",
     "min_type_size", "pdf_page_box", "pdf_fonts_outlined", "pdf_color_space",
-    "required_elements", "facts_math", "claim_disclaimer_pairing", "render_regression",
+    "required_elements", "facts_math", "claim_disclaimer_pairing", "element_placement",
+    "facts_row_separators", "render_regression", "min_x_height",
 ]
 V02 = ["text_contrast", "swatch_whitelist", "fonts_available", "brief_to_checklist", "brief_compliance"]
 
@@ -155,7 +156,7 @@ def test_brand_pack_must_be_brand(tmp_path):
 # ----------------------------------------------------------------- registry
 def test_every_v01_check_registered():
     names = [c.name for c in registry.all_checks()]
-    assert names == V01
+    assert sorted(names) == sorted(V01)
 
 
 def test_v02_checks_designed_not_built():
@@ -301,3 +302,20 @@ def test_wizard_pack_verified_values():
                             ("pdf_fonts", "fonts_outlined", True)):
         r = pack.by_id(rid)
         assert r.verified and r[key] == value and r.verified_by == "Darius"
+
+
+def test_suffixed_rule_ids(tmp_path):
+    from sla_preflight.rules import RuleSet
+    p = tmp_path / "p.yaml"
+    p.write_text(yaml.safe_dump({"kind": "brand", "rules": [
+        {**GOOD_RULE, "id": "min_type_size.facts"}, {**GOOD_RULE, "id": "min_type_size.other"},
+        {**GOOD_RULE, "id": "min_type_sizes"}]}))
+    rs = RuleSet([load_pack(p)])
+    assert [r.id for r in rs.all("min_type_size")] == ["min_type_size.facts", "min_type_size.other"]
+
+
+def test_tab_leader_parsed(fx):
+    doc = parse_sla(fx["sla"]["rows_block_tab_leaders"])
+    (f,) = doc.find("fact_rows_block")
+    tabs = [r for r in f.runs if r.text == "\t"]
+    assert len(tabs) == 3 and {r.tab_fill for r in tabs} == {"."}

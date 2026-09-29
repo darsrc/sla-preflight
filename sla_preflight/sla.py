@@ -50,6 +50,8 @@ class TextRun:
     text: str
     font: str | None
     size_pt: float
+    scale_v: float = 100.0  # vertical character scaling, percent
+    tab_fill: str | None = None  # for a tab: its leader character, e.g. "."
 
 
 @dataclass
@@ -223,6 +225,25 @@ class _Styles:
             name = st.get("PARENT")
         return None
 
+    def tab_fill(self, para_style: ET.Element | None, default_style: ET.Element | None) -> str | None:
+        """Leader character of the paragraph's tab stops (<Tabs Fill="."/>),
+        from the paragraph itself or its paragraph style chain."""
+        for src in (para_style, default_style):
+            if src is None:
+                continue
+            fills = [t.get("Fill", "") for t in src.findall("Tabs")]
+            name = src.get("PARENT")
+            for _ in range(20):
+                if fills or not name or name not in self.para:
+                    break
+                st = self.para[name]
+                fills = [t.get("Fill", "") for t in st.findall("Tabs")]
+                name = st.get("PARENT")
+            fills = [f for f in fills if f.strip()]
+            if fills:
+                return fills[0]
+        return None
+
     def resolve(self, key: str, el: ET.Element | None, para_style: ET.Element | None,
                 default_style: ET.Element | None) -> str | None:
         if el is not None:
@@ -259,10 +280,14 @@ def _parse_story(obj: ET.Element, styles: _Styles) -> list[TextRun]:
         for el in pending:
             size = styles.resolve("FONTSIZE", el, para_el, default_style)
             font = styles.resolve("FONT", el, para_el, default_style)
+            scale_v = styles.resolve("SCALEV", el, para_el, default_style)
+            ch = el.get("CH", "")
             runs.append(TextRun(
-                el.get("CH", ""),
+                ch,
                 font or styles.default_font,
                 float(size) if size is not None else styles.default_size,
+                float(scale_v) if scale_v not in (None, "") else 100.0,
+                styles.tab_fill(para_el, default_style) if ch == "\t" else None,
             ))
         pending.clear()
         if newline:

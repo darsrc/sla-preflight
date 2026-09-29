@@ -169,8 +169,12 @@ class RuleSet:
         self.packs = packs
 
     def all(self, rule_id: str) -> list[Rule]:
-        """Every rule with this id, across packs, in load order."""
-        return [r for p in self.packs for r in p.rules if r.id == rule_id]
+        """Every rule with this id, across packs, in load order. A rule id
+        may carry a suffix after a dot ('min_type_size.facts'), so one pack
+        can hold several rules for the same check, each with its own source
+        and verified status."""
+        return [r for p in self.packs for r in p.rules
+                if r.id == rule_id or r.id.startswith(rule_id + ".")]
 
     def first(self, rule_id: str) -> Rule | None:
         found = self.all(rule_id)

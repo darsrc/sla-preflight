@@ -468,6 +468,21 @@ def _missing_font(l: Label):
     l.get("disclaimer").font = "Nonexistent Sans Regular"
 
 
+def _gel(stated: str):
+    def fn(l: Label):
+        l.get("count").text = [("NET 16 OZ (454 g)", 8)]
+        l.get("serving_info").text = [("Serving Size: 1-2 Tablespoons (15 g)", 7),
+                                      (f"Servings Per Container: {stated}", 7)]
+    return fn
+
+
+def _template_names(l: Label):
+    # a template that uses its own names for regulatory elements
+    l.get("statement_of_identity").name = "tagline"
+    l.get("net_quantity").name = "net_text"
+    l.get("supplement_facts").name = "facts_rows"
+
+
 def _render_moved(l: Label):
     l.get("lot_text").x += 0.10
 
@@ -494,6 +509,11 @@ SLA_FIXTURES = {
     "claim_no_disclaimer": _claim_no_disclaimer,
     "no_claim_no_disclaimer": _no_claim_no_disclaimer,
     "render_moved": _render_moved,
+    "template_names": _template_names,
+    # 454 g / 15 g = 30.27 servings
+    "facts_gel_about_30": _gel("About 30"),
+    "facts_gel_about_31": _gel("About 31"),
+    "facts_gel_about_60": _gel("About 60"),
     "renamed_bleed": _renamed_bleed,
     "unnamed_small_type": _unnamed_small_type,
     "missing_font": _missing_font,

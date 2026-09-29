@@ -6,14 +6,18 @@ import re
 from ..context import Context
 from ..registry import check
 from ..result import CheckResult, Finding, finalize
-from ._common import CheckInputError, label, matches, overlap_pairs, schematic_crop
+from ._common import (
+    CheckInputError, label, matches, overlap_pairs, schematic_crop, shown_name, with_aliases,
+)
 
 
 def _state(ctx: Context, name: str) -> tuple[str, object]:
     """('ok'|'missing'|'off_page'|'not_printing'|'empty', frame or None).
-    When several frames share a name, the best one counts."""
+    When several frames share a name, the best one counts. Aliases from
+    frame_aliases rules are looked up too."""
     doc = ctx.doc
-    cands = [f for f in doc.all_frames() if matches(f.name, [name])]
+    names = with_aliases(ctx, [name])
+    cands = [f for f in doc.all_frames() if matches(f.name, names)]
     if not cands:
         return "missing", None
     order = ["ok", "empty", "not_printing", "off_page"]
@@ -66,10 +70,12 @@ def required_elements(ctx: Context) -> CheckResult:
         for name in rule.get("frames", []) or []:
             st, frame = _state(ctx, name)
             thr = {"required": True, "printing": True, "non_empty": True, "overlapped": False}
+            shown = shown_name(ctx, name)
+            obj = frame.name if frame is not None else shown
             if st != "ok":
                 findings.append(Finding.from_rule(
-                    rule, name, measured={"problem": st}, threshold=thr,
-                    message=f"Required frame {name!r} {PROBLEM_TEXT[st]}.",
+                    rule, obj, measured={"problem": st, "required_as": name}, threshold=thr,
+                    message=f"Required frame {shown!r} {PROBLEM_TEXT[st]}.",
                 ))
                 continue
             for p in pairs:
@@ -77,12 +83,12 @@ def required_elements(ctx: Context) -> CheckResult:
                     continue
                 other = p["under"] if frame is p["top"] else p["top"]
                 f = Finding.from_rule(
-                    rule, name, measured={"problem": "overlapped", "other": label(other)},
+                    rule, obj, measured={"problem": "overlapped", "other": label(other), "required_as": name},
                     threshold=thr,
-                    message=f"Required frame {name!r} is overlapped by {label(other)!r}.",
+                    message=f"Required frame {shown!r} is overlapped by {label(other)!r}.",
                 )
                 f.evidence["crop"] = schematic_crop(
-                    ctx, "required_elements", f"{name}__{label(other)}", [frame], [other],
+                    ctx, "required_elements", f"{obj}__{label(other)}", [frame], [other],
                     region=p["box"])
                 findings.append(f)
     names = sorted({f.object for f in findings})
@@ -98,15 +104,22 @@ def required_elements(ctx: Context) -> CheckResult:
     category="content",
     description="Servings per container equals count / serving size.",
     rules=("facts_math",),
+    optional_rules=("facts_about_rounding",),
     explain=(
-        "Parses the unit count (e.g. '200 Capsules') from the count frame and the serving size "
-        "and servings per container from the serving_info frame, using the regexes in the "
-        "facts_math rule. Fails on mismatch; errors when a number cannot be parsed."
+        "Parses the net quantity (e.g. '200 Capsules', or grams such as '(454 g)') from the "
+        "count frame and the serving size and servings per container from the serving_info "
+        "frame, using the regexes in the facts_math rule (the first group that matches is "
+        "used, so one pattern can cover capsules and grams). Fails on mismatch; errors when "
+        "a number cannot be parsed. When the label says 'About N' and N is within 1 of the "
+        "exact value, the rounding is judged by the facts_about_rounding rule instead "
+        "(method: nearest or floor) and cites it; without that rule an inexact 'About' fails."
     ),
     fix="Correct 'Servings Per Container' (or the count / serving size) so that count / serving size = servings.",
 )
 def facts_math(ctx: Context) -> CheckResult:
     rules = ctx.rules.all("facts_math")
+    about_rules = ctx.rules.all("facts_about_rounding")
+    used = list(rules)
     findings: list[Finding] = []
 
     def text_of(name: str) -> str:
@@ -115,11 +128,15 @@ def facts_math(ctx: Context) -> CheckResult:
             raise CheckInputError(f"frame {name!r} {PROBLEM_TEXT[st]}; cannot check the math")
         return doc_text(ctx, frame)
 
-    def number(pattern: str, text: str, what: str, frame: str) -> int:
+    def number(pattern: str, text: str, what: str, frame: str) -> float:
         m = re.search(pattern, text)
-        if not m:
+        groups = [g for g in (m.groups() if m else ()) if g is not None]
+        if not groups:
             raise CheckInputError(f"could not parse {what} from {frame!r}: {text[:60]!r}")
-        return int(m.group(1).replace(",", ""))
+        return float(groups[0].replace(",", ""))
+
+    def fmt(v: float):
+        return int(v) if v == int(v) else round(v, 3)
 
     for rule in rules:
         cf = rule.get("count_frame", "count")
@@ -128,23 +145,38 @@ def facts_math(ctx: Context) -> CheckResult:
         count = number(rule["count_pattern"], count_text, "the unit count", cf)
         size = number(rule["serving_size_pattern"], serving_text, "the serving size", sf)
         stated = number(rule["servings_pattern"], serving_text, "servings per container", sf)
+        about = bool(re.search(rule.get(
+            "about_pattern", r"(?i)servings\s+per\s+container\s*:?\s*about\b"), serving_text))
         if size <= 0:
-            raise CheckInputError(f"serving size in {sf!r} is {size}")
+            raise CheckInputError(f"serving size in {sf!r} is {size:g}")
         expected = count / size
-        exp = int(expected) if expected == int(expected) else round(expected, 3)
-        if stated != expected:
-            findings.append(Finding.from_rule(
-                rule, sf,
-                measured={"count": count, "serving_size": size, "servings_stated": stated,
-                          "servings_expected": exp, "count_frame": cf},
-                threshold={"formula": "servings = count / serving_size"},
-                message=(f"{count} / {size} = {exp} servings, but the label says {stated}."
-                         if expected == int(expected) else
-                         f"{count} is not divisible by serving size {size} ({exp}); label says {stated}."),
-            ))
+        measured = {"count": fmt(count), "serving_size": fmt(size), "servings_stated": fmt(stated),
+                    "servings_expected": fmt(expected), "about": about, "count_frame": cf}
+        if stated == expected:
+            continue
+        if about and abs(stated - expected) < 1 and about_rules:
+            # only rounding is in question: judge it by the rounding rule
+            ar = about_rules[0]
+            used.append(ar)
+            method = ar.get("method", "nearest")
+            want = int(expected + 0.5) if method == "nearest" else int(expected)
+            if stated != want:
+                findings.append(Finding.from_rule(
+                    ar, sf, measured=measured,
+                    threshold={"about_rounding": method, "servings_expected_rounded": want},
+                    message=f"{fmt(count)} / {fmt(size)} = {fmt(expected)}; rounded ({method}) "
+                            f"that is About {want}, but the label says About {fmt(stated)}.",
+                ))
+            continue
+        findings.append(Finding.from_rule(
+            rule, sf, measured=measured,
+            threshold={"formula": "servings = count / serving_size"},
+            message=(f"{fmt(count)} / {fmt(size)} = {fmt(expected)} servings, but the label says "
+                     f"{'About ' if about else ''}{fmt(stated)}."),
+        ))
     f0 = findings[0] if findings else None
     return finalize(
-        "facts_math", "deterministic", findings, rules,
+        "facts_math", "deterministic", findings, used,
         "Servings per container matches count / serving size.",
         f"Servings per container is wrong: {f0.message}" if f0 else "",
     )

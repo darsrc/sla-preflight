@@ -21,6 +21,33 @@ def matches(name: str, patterns) -> bool:
     return bool(name) and any(fnmatchcase(name, p) for p in patterns or ())
 
 
+def frame_aliases(ctx: Context) -> dict[str, list[str]]:
+    """Name aliases from every frame_aliases rule: a brand pack maps the
+    names other packs use (e.g. the regulatory pack's 'net_quantity') to
+    its template's frame names (e.g. 'count')."""
+    out: dict[str, list[str]] = {}
+    for r in ctx.rules.all("frame_aliases"):
+        for name, target in (r.get("aliases") or {}).items():
+            out.setdefault(str(name), []).extend(
+                [target] if isinstance(target, str) else list(target))
+    return out
+
+
+def with_aliases(ctx: Context, names) -> list[str]:
+    """The names plus every alias they map to."""
+    al = frame_aliases(ctx)
+    out = []
+    for n in names or ():
+        out += [n] + al.get(n, [])
+    return out
+
+
+def shown_name(ctx: Context, name: str) -> str:
+    """How a (possibly aliased) frame name is shown: 'net_quantity -> count'."""
+    targets = frame_aliases(ctx).get(name)
+    return f"{name} -> {', '.join(targets)}" if targets else name
+
+
 def any_matches(names, patterns) -> bool:
     return any(matches(n, patterns) for n in names)
 
@@ -111,7 +138,8 @@ def overlap_pairs(ctx: Context) -> list[dict]:
     if "overlap_pairs" in ctx.cache:
         return ctx.cache["overlap_pairs"]
     doc = ctx.doc
-    required = {n for r in ctx.rules.all("required_elements") for n in r.get("frames", [])}
+    required = with_aliases(
+        ctx, [n for r in ctx.rules.all("required_elements") for n in r.get("frames", [])])
     containers: list[tuple[str, str]] = []
     ignore: list[str] = []
     for r in ctx.rules.all("no_frame_overlap"):
@@ -205,6 +233,6 @@ def page_label(index: int | None) -> str:
 
 __all__ = [
     "CheckInputError", "r6", "matches", "any_matches", "label", "bleed_patterns",
-    "missing_fonts", "require_fonts", "box_in", "printing_leaves", "overlap_pairs",
+    "missing_fonts", "require_fonts", "frame_aliases", "with_aliases", "shown_name", "box_in", "printing_leaves", "overlap_pairs",
     "schematic_crop", "page_label", "intersection", "names_with_ancestry", "Path",
 ]

@@ -249,3 +249,66 @@ def test_scribus_checks_refuse_missing_fonts(fx, tmp_path, approved_render, chec
     res = run_one(fx, check, "missing_font", tmp_path=tmp_path, approved_render=approved_render)
     assert res["status"] == "error", res
     assert "Nonexistent Sans Regular" in res["summary"]
+
+
+GEL_PACK = """kind: brand
+rules:
+  - id: facts_math
+    description: Servings equal net quantity / serving size (capsules or grams).
+    count_frame: count
+    serving_frame: serving_info
+    count_pattern: '(?i)\\((\\d+(?:\\.\\d+)?)\\s*g\\)|(\\d[\\d,]*)\\s*capsules'
+    serving_size_pattern: '(?i)serving\\s+size\\s*:?[^\\n(]*\\((\\d+(?:\\.\\d+)?)\\s*g\\)|serving\\s+size\\s*:?\\s*(\\d+)'
+    servings_pattern: '(?i)servings\\s+per\\s+container\\s*:?\\s*(?:about\\s+)?(\\d+)'
+    source: test
+    verified: true
+    verified_by: tests
+    verified_on: 2026-09-28
+%s"""
+ABOUT_RULE = """  - id: facts_about_rounding
+    description: About N rounds to the nearest whole serving.
+    method: nearest
+    source: test (unverified)
+    verified: false
+"""
+
+
+@pytest.mark.parametrize("fixture,with_about,status,rule_id", [
+    ("facts_gel_about_30", True, "warn", "facts_about_rounding"),   # rounding OK, rule unverified
+    ("facts_gel_about_31", True, "warn", "facts_about_rounding"),   # rounding wrong, rule unverified
+    ("facts_gel_about_60", True, "fail", "facts_math"),             # math wrong: a real failure
+    ("facts_gel_about_30", False, "fail", "facts_math"),            # no rounding rule: strict
+    ("good", True, "pass", None),                                    # capsules unaffected
+])
+def test_facts_math_grams_and_about(fx, tmp_path, fixture, with_about, status, rule_id):
+    pack = tmp_path / "gel.yaml"
+    pack.write_text(GEL_PACK % (ABOUT_RULE if with_about else ""))
+    res = run_one(fx, "facts_math", fixture, tmp_path=tmp_path, brand_pack=pack)
+    assert res["status"] == status, res
+    if rule_id:
+        assert any(f["rule"].endswith("#" + rule_id) for f in res["findings"]), res
+
+
+def test_frame_aliases_map_other_packs_names(fx, tmp_path):
+    """A brand pack maps the regulatory pack's names to template names."""
+    def problems(res):
+        return {f["measured"]["required_as"] for f in res["findings"] if f.get("measured", {}).get("problem")}
+
+    rep = run_checks(fx["sla"]["template_names"], "test_regulatory", out_dir=tmp_path,
+                     only=["required_elements"])
+    assert problems(rep["results"][0]) == {"statement_of_identity", "net_quantity", "supplement_facts"}
+    pack = tmp_path / "aliases.yaml"
+    pack.write_text(
+        "kind: brand\nrules:\n  - id: frame_aliases\n    description: template names\n"
+        "    aliases: {statement_of_identity: tagline, net_quantity: net_text, "
+        "supplement_facts: facts_rows}\n"
+        "    source: test\n    verified: true\n    verified_by: tests\n    verified_on: 2026-09-29\n")
+    rep = run_checks(fx["sla"]["template_names"], "test_regulatory", out_dir=tmp_path,
+                     brand_pack=pack, only=["required_elements"])
+    res = rep["results"][0]
+    assert res["status"] == "warn" and problems(res) == set(), res  # unverified pack, but clean
+    # a missing aliased frame is reported under the template's name
+    rep = run_checks(fx["sla"]["missing_manufacturer"], "test_regulatory", out_dir=tmp_path,
+                     brand_pack=pack, only=["required_elements"])
+    objs = {f["object"] for f in rep["results"][0]["findings"] if f.get("measured", {}).get("problem")}
+    assert "manufacturer" in objs

@@ -8,7 +8,7 @@ from ..scribus import layout_report
 from ..sla import pt_to_in
 from ._common import (
     EPS_PT, any_matches, bleed_patterns, box_in, label, matches, names_with_ancestry,
-    overlap_pairs, page_label, printing_leaves, r6, require_fonts, schematic_crop,
+    overlap_pairs, page_label, printing_leaves, r6, require_fonts, schematic_crop, with_aliases,
 )
 
 SIDES = ("left", "top", "right", "bottom")
@@ -270,7 +270,7 @@ def min_type_size(ctx: Context) -> CheckResult:
     findings: list[Finding] = []
     for rule in rules:
         min_pt = rule["min_pt"]
-        scope = rule.get("frames") or []
+        scope = with_aliases(ctx, rule.get("frames") or [])
         for f in printing_leaves(doc):
             if not f.is_text or (scope and not matches(f.name, scope)):
                 continue

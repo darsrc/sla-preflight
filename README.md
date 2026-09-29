@@ -186,6 +186,17 @@ Frame-name lists (`bleed_allowed`, `bleed_objects`, `frames`, `containers`,
 matches every object inside a group of that name. Frames without a name are
 reported by position, e.g. `unnamed text at (0.174, 1.983) in in group Group40`.
 
+A brand pack can keep its template's own frame names: a `frame_aliases` rule
+maps the names the regulatory pack uses (`statement_of_identity`,
+`net_quantity`, `supplement_facts`) to the template's frames. Results then name
+the template frame and record the name it was required as (`required_as`).
+
+`facts_math` also handles weights ("NET 16 OZ (454 g)", "Serving Size: 1-2
+Tablespoons (15 g)") and "About N" servings. When "About N" is within 1 of the
+exact value, only the rounding is in question and the `facts_about_rounding`
+rule judges it (and is cited); a larger difference, or no rounding rule, fails
+under `facts_math`.
+
 Rules are cited as `<pack>#<id>`. A check uses every loaded rule with its id,
 so a brand pack and a regulatory pack can both require frames. The pack
 loader refuses a rule with no source, a non-boolean `verified`, or
@@ -199,6 +210,8 @@ Parameters per rule id:
 | `bleed` | `bleed_in`, `tolerance_in` |
 | `safe_margin` | `min_gap_in`, `bleed_allowed` (frame names), `touch_tolerance_in` |
 | `bleed_objects` | `frames`: a layout pack's own objects allowed to bleed (added to `bleed_allowed`) |
+| `frame_aliases` | `aliases`: map names other packs use to this layout's frames, e.g. `{net_quantity: count}` |
+| `facts_about_rounding` | `method` (`nearest` or `floor`): how "About N" servings may be rounded |
 | `pdf_bleed` | `required`, `tolerance_in` |
 | `pdf_fonts` | `fonts_outlined` |
 | `pdf_color` | `color_space` (`CMYK`) |
@@ -206,7 +219,7 @@ Parameters per rule id:
 | `no_frame_overlap` | `containers` (`[outer, inner]` pairs allowed to overlap), `ignore` |
 | `min_type_size` | `min_pt`, optional `frames` to limit scope |
 | `required_elements` | `frames` |
-| `facts_math` | `count_frame`, `serving_frame`, `count_pattern`, `serving_size_pattern`, `servings_pattern` (regexes, one capture group) |
+| `facts_math` | `count_frame`, `serving_frame`, `count_pattern`, `serving_size_pattern`, `servings_pattern`, `about_pattern` (regexes; the first matching group is used, so one pattern can cover unit counts and grams) |
 | `claim_disclaimer` | `claim_frames`, `disclaimer_frame` |
 | `render_regression` | `dpi`, `pixel_threshold`, `max_changed_fraction` |
 

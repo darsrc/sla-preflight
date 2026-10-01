@@ -1,6 +1,7 @@
 # Printer pack: Wizard Labels (public example).
-# Confirmed: safe margin, bleed, outlined fonts (prepress email), required
-# lot_box, bleed present in the PDF, CMYK only.
+# Confirmed: safe margin, bleed, outlined fonts (prepress email), bleed present in
+# the PDF, CMYK only. (No required elements: a lot box is a client design element, not a
+# printer rule; the required_elements rule for lot_box was removed 2026-10-01.)
 # The die size is per job, not per printer: pass it at run time
 # (sla-preflight run ... --die 10.25x2.5).
 pack: printer/wizard_labels.yaml
@@ -31,14 +32,6 @@ rules:
     source: "Wizard Labels prepress email, 2026-06-04"
     verified: true
     verified_by: Darius
-    verified_on: 2026-09-28
-
-  - id: required_elements
-    description: The lot/expiration area is always present and printing; never omitted.
-    frames: [lot_box]
-    source: "Owner confirmation: lot_box is the lot/expiration area, REQUIRED (spec criterion 6)"
-    verified: true
-    verified_by: repo owner
     verified_on: 2026-09-28
 
   - id: pdf_bleed
